@@ -114,7 +114,9 @@ cargo run --release
 启动后打开浏览器访问：
 
 ```
-http://localhost:8080
+http://localhost:8080          # 站点状态列表
+http://localhost:8080/overview # 综合看板
+http://localhost:8080/map      # 地图监控（新增）
 ```
 
 ### 界面功能
@@ -134,15 +136,30 @@ http://localhost:8080
    - 阈值标线自动标注上下限
    - 面积图 + 平滑曲线
 
+4. **🗺️ 地图监控**（新增）: `/map` 页面
+   - OpenLayers + 天地图/高德瓦片底图
+   - 站点位置标记（在线=绿色/报警=红色/离线=灰色）
+   - 左侧面板：省份筛选、搜索、站点列表
+   - 点击标记弹出详情，支持打开详情抽屉
+   - 自动适应视野，缩放至所有站点范围
+
 ## API 接口
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `GET /` | - | 监控仪表盘 HTML |
+| `GET /` | - | 监控仪表盘 HTML（站点列表） |
+| `GET /overview` | - | 综合看板 HTML |
+| `GET /map` | - | 🗺️ 地图监控 HTML |
 | `GET /api/status` | - | 全量监控状态 JSON |
 | `GET /api/summary` | - | 汇总统计 JSON |
 | `GET /api/stations` | - | 站台列表 JSON |
 | `GET /api/config` | - | 当前配置 JSON |
+| `GET /api/regions` | - | 省级统计 JSON |
+| `GET /api/station/{id}` | - | 站点详情 JSON |
+| `GET /api/top` | - | Top 重点关注站点 JSON |
+| `GET /api/map/stations` | - | 🗺️ 地图站点数据（含经纬度） |
+| `GET /api/station/{id}/devices` | - | 站内设备状态 JSON |
+| `GET /api/devices/events` | - | 设备状态 SSE 推送 |
 | `GET /api/chart/alarms?hours=24` | - | 报警趋势图数据 |
 | `GET /api/chart/values?station=50936&item=wA&hours=6` | - | 设备数值曲线数据 |
 | `GET /api/events` | - | SSE 实时推送流 |
@@ -177,7 +194,10 @@ weather-monitor/
 │   ├── monitor.rs          # 核心业务逻辑（tm.c 移植）
 │   └── models.rs           # 数据结构定义
 └── templates/
-    └── dashboard.html      # ECharts 交互仪表盘
+    ├── dashboard.html      # ECharts 交互仪表盘（站点列表视图）
+    ├── overview.html       # 综合看板（省级监管 + Top5）
+    ├── map.html            # 🗺️ 地图监控（OpenLayers + 天地图/高德）
+    └── devices.html        # 站内设备状态详情
 ```
 
 ## 业务逻辑移植对照

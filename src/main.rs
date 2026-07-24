@@ -222,6 +222,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(root_handler))
         .route("/overview", get(overview_handler))
+        .route("/map", get(map_handler))
         .route("/station/{id}/devices", get(devices_page_handler))
         .route("/api/status", get(api_status))
         .route("/api/summary", get(api_summary))
@@ -276,6 +277,10 @@ async fn main() {
             tracing::info!("服务已关闭");
         }
     }
+}
+
+async fn map_handler() -> Html<&'static str> {
+    Html(include_str!("../templates/map.html"))
 }
 
 async fn root_handler() -> Html<&'static str> {
