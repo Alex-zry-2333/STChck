@@ -1,0 +1,8 @@
+/target
+*.log
+*.tmp
+/dashboard_check.html
+/station_detail.json
+/station_50936_real.json
+/regions_real.json
+config.toml

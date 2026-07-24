@@ -1,0 +1,1337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>气象站数据监控系统</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+:root {
+  --bg: #f0f6ff;
+  --card-bg: #ffffff;
+  --primary: #2196f3;
+  --primary-dark: #1565c0;
+  --primary-light: #e3f2fd;
+  --primary-gradient: linear-gradient(135deg, #1565c0, #1e88e5);
+  --text-primary: #1a2332;
+  --text-secondary: #5a6a7a;
+  --text-muted: #9aaaba;
+  --border: #e8edf4;
+  --shadow: 0 4px 20px rgba(33,150,243,0.08);
+  --shadow-hover: 0 8px 30px rgba(33,150,243,0.15);
+  --radius: 16px;
+  --radius-sm: 12px;
+  --green: #4caf50;
+  --red: #f44336;
+  --orange: #ff9800;
+  --yellow: #ffc107;
+  --yellow-bg: #fff8e1;
+  --gray: #90a4ae;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif; background: var(--bg); color: var(--text-primary); min-height: 100vh; }
+.header {
+  background: var(--primary-gradient);
+  padding: 20px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: 0 4px 24px rgba(21,101,192,0.2);
+}
+.header h1 { font-size: 22px; font-weight: 600; color: #fff; letter-spacing: 0.5px; }
+.header .subtitle { font-size: 13px; color: rgba(255,255,255,0.7); margin-top: 2px; }
+.header .status-bar { display: flex; gap: 24px; align-items: center; }
+.header .status-item { text-align: center; padding: 6px 14px; background: rgba(255,255,255,0.12); border-radius: var(--radius-sm); backdrop-filter: blur(8px); }
+.header .status-item .num { font-size: 20px; font-weight: 700; color: #fff; }
+.header .status-item .label { font-size: 11px; color: rgba(255,255,255,0.7); }
+.header .nav { display: flex; gap: 8px; align-items: center; background: rgba(255,255,255,0.12); padding: 6px; border-radius: var(--radius-sm); backdrop-filter: blur(8px); }
+.header .nav a { font-size: 13px; color: rgba(255,255,255,0.85); text-decoration: none; padding: 6px 14px; border-radius: 10px; transition: all 0.2s; }
+.header .nav a:hover { color: #fff; background: rgba(255,255,255,0.1); }
+.header .nav a.active { color: var(--primary-dark); background: #fff; font-weight: 600; }
+.container { max-width: 1440px; margin: 0 auto; padding: 24px; }
+
+.summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.summary-card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 20px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  transition: all 0.2s;
+}
+.summary-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
+.summary-card .card-label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
+.summary-card .card-value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+.summary-card .card-value.green { color: var(--green); }
+.summary-card .card-value.blue { color: var(--primary); }
+.summary-card .card-value.red { color: var(--red); }
+.summary-card .card-value.orange { color: var(--orange); }
+.summary-card .card-value.dark { color: var(--text-primary); }
+.summary-card .card-value.small-font { font-size: 15px; font-weight: 500; color: var(--text-secondary); }
+
+.chart-card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  margin-bottom: 24px;
+  transition: all 0.2s;
+}
+.chart-card:hover { box-shadow: var(--shadow-hover); }
+.chart-card .chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }
+.chart-card .chart-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.chart-card .chart-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chart-card .chart-controls select, .chart-card .chart-controls input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.chart-card .chart-controls select:focus, .chart-card .chart-controls input:focus { border-color: var(--primary); }
+.btn-group { display: flex; gap: 4px; }
+.btn-time {
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-time:hover { border-color: var(--primary); color: var(--primary); }
+.btn-time.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.btn-play {
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--primary);
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-play:hover { background: var(--primary); color: #fff; }
+.chart-box { width: 100%; height: 320px; }
+.carousel-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--primary-light);
+  padding: 4px 12px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.filter-bar { display: flex; gap: 12px; margin-bottom: 20px; align-items: center; flex-wrap: wrap; }
+.filter-bar input {
+  flex: 1; min-width: 200px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 10px 18px;
+  border-radius: 20px;
+  font-size: 13px;
+  outline: none;
+  box-shadow: var(--shadow);
+  transition: all 0.2s;
+}
+.filter-bar input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(33,150,243,0.1); }
+.filter-bar select {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  outline: none;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.filter-bar select:focus { border-color: var(--primary); }
+
+.station-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.station-card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.station-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
+.station-card.offline { opacity: 0.7; }
+.station-card.has-alarm { border-color: var(--red); }
+.station-card.stale {
+  background: var(--yellow-bg);
+}
+.station-header {
+  display: flex; align-items: center; padding: 14px 18px;
+  background: linear-gradient(135deg, #f8faff, #f0f6ff);
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+}
+.station-header .indicator { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; position: relative; }
+.station-header .indicator.online { background: var(--green); box-shadow: 0 0 8px rgba(76,175,80,0.4); }
+.station-header .indicator.offline { background: var(--gray); }
+.station-header .indicator.alarm { background: var(--red); box-shadow: 0 0 8px rgba(244,67,54,0.4); }
+.station-header .st-name { font-size: 14px; font-weight: 600; flex: 1; }
+.station-header .st-id { font-size: 12px; color: var(--primary); font-family: 'Consolas', 'Cascadia Code', monospace; font-weight: 500; }
+.station-header .st-vendor { font-size: 11px; color: var(--text-secondary); padding: 2px 10px; background: var(--primary-light); border-radius: 10px; }
+.station-body { padding: 12px 18px; }
+.station-meta { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 8px; font-size: 11px; color: var(--text-secondary); margin-bottom: 8px; }
+.station-meta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.station-meta .label { color: var(--text-muted); }
+.station-meta .rate-good { color: var(--green); font-weight: 600; }
+.station-meta .rate-warn { color: var(--orange); font-weight: 600; }
+.station-meta .rate-bad { color: var(--red); font-weight: 600; }
+.station-meta .stale-time { color: var(--orange); }
+.alarm-list { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+.alarm-item { font-size: 11px; color: var(--red); padding: 3px 10px; background: rgba(244,67,54,0.06); border-radius: 8px; border: 1px solid rgba(244,67,54,0.12); }
+.no-alarms { font-size: 12px; color: var(--green); font-weight: 500; }
+.no-alarms.offline { color: var(--text-muted); }
+
+.error-bar { background: rgba(244,67,54,0.08); color: var(--red); padding: 10px 24px; text-align: center; font-size: 13px; border-bottom: 1px solid rgba(244,67,54,0.15); }
+.footer { text-align: center; padding: 20px; font-size: 12px; color: var(--text-muted); }
+
+/* Province cards */
+.province-section { margin-bottom: 24px; }
+.province-section-title { font-size: 14px; font-weight: 600; color: var(--text-secondary); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.province-section-title::before { content: ''; display: inline-block; width: 4px; height: 14px; background: var(--primary); border-radius: 2px; }
+.province-grid { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.province-card {
+  flex: 0 0 180px;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+.province-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
+.province-card.active { border-color: var(--primary); background: var(--primary-light); }
+.province-card .prov-name { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+.province-card .prov-count { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.province-card .prov-rate { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.province-card .prov-rate.good { color: var(--green); }
+.province-card .prov-rate.warn { color: var(--orange); }
+.province-card .prov-rate.bad { color: var(--red); }
+.province-card .prov-bar { height: 4px; background: #e8edf4; border-radius: 2px; overflow: hidden; margin-bottom: 10px; }
+.province-card .prov-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.province-card .prov-bar-fill.good { background: var(--green); }
+.province-card .prov-bar-fill.warn { background: var(--orange); }
+.province-card .prov-bar-fill.bad { background: var(--red); }
+.province-card .prov-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.province-card .prov-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 500; }
+.province-card .prov-badge.alarm { background: rgba(244,67,54,0.1); color: var(--red); }
+.province-card .prov-badge.offline { background: rgba(144,164,174,0.15); color: var(--gray); }
+.province-card .prov-badge.low { background: rgba(255,152,0,0.1); color: var(--orange); }
+
+/* Top 5 section */
+.top-section { margin-bottom: 24px; }
+.top-carousel {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  padding-bottom: 8px;
+}
+.top-card {
+  flex: 0 0 320px;
+  max-width: 100%;
+  scroll-snap-align: start;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+.top-dots { display: flex; justify-content: center; gap: 6px; margin-top: 8px; }
+.top-dot { width: 8px; height: 8px; border-radius: 50%; background: #d0d8e0; cursor: pointer; transition: all 0.2s; }
+.top-dot.active { background: var(--primary); }
+.top-card .top-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.top-card .top-list { display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; }
+.top-card .top-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--bg); cursor: pointer;
+  transition: all 0.2s;
+}
+.top-card .top-item:hover { background: var(--primary-light); }
+.top-card .top-rank { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.top-card .top-rank.rank-1 { background: #ef5350; }
+.top-card .top-rank.rank-2 { background: #ff7043; }
+.top-card .top-rank.rank-3 { background: #ffa726; }
+.top-card .top-rank.rank-other { background: var(--text-muted); }
+.top-card .top-info { flex: 1; min-width: 0; }
+.top-card .top-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-card .top-province { font-size: 11px; color: var(--text-muted); }
+.top-card .top-value { font-size: 13px; font-weight: 700; color: var(--red); flex-shrink: 0; }
+.btn-restore {
+  font-size: 11px; padding: 3px 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--card-bg); color: var(--text-secondary);
+  cursor: pointer; transition: all 0.2s; white-space: nowrap;
+}
+.btn-restore:hover { border-color: var(--primary); color: var(--primary); }
+.btn-hide {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%; border: none;
+  background: rgba(158,158,158,0.15); color: var(--text-muted);
+  font-size: 12px; line-height: 1; cursor: pointer; margin-left: 6px;
+  transition: all 0.2s; flex-shrink: 0;
+}
+.btn-hide:hover { background: rgba(244,67,54,0.15); color: var(--red); }
+
+/* Station detail drawer */
+.drawer-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 998;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.25s;
+}
+.drawer-overlay.open { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; right: 0; width: 460px; max-width: 90vw;
+  height: 100vh;
+  background: var(--card-bg);
+  box-shadow: -4px 0 30px rgba(0,0,0,0.12);
+  z-index: 999;
+  transform: translateX(100%);
+  transition: transform 0.3s ease-out;
+  display: flex; flex-direction: column;
+}
+.drawer.open { transform: translateX(0); }
+.drawer-header {
+  padding: 20px 24px;
+  background: var(--primary-gradient);
+  color: #fff;
+  display: flex; align-items: flex-start; justify-content: space-between;
+}
+.drawer-header .drawer-title { font-size: 17px; font-weight: 600; }
+.drawer-header .drawer-subtitle { font-size: 12px; color: rgba(255,255,255,0.75); margin-top: 4px; }
+.drawer-close { width: 32px; height: 32px; border-radius: 50%; border: none; background: rgba(255,255,255,0.15); color: #fff; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.drawer-close:hover { background: rgba(255,255,255,0.25); }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+.drawer-section { margin-bottom: 24px; }
+.drawer-section-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.drawer-section-title::before { content: ''; display: inline-block; width: 4px; height: 12px; background: var(--primary); border-radius: 2px; }
+.drawer-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.drawer-info-item { background: var(--bg); padding: 10px 12px; border-radius: var(--radius-sm); }
+.drawer-info-item.full { grid-column: 1 / -1; }
+.drawer-info-item .label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+.drawer-info-item .value { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.drawer-status-row { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; }
+.drawer-status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.drawer-status-badge.online { background: rgba(76,175,80,0.1); color: var(--green); }
+.drawer-status-badge.offline { background: rgba(144,164,174,0.15); color: var(--gray); }
+.drawer-status-badge.alarm { background: rgba(244,67,54,0.1); color: var(--red); }
+.category-list { display: flex; flex-direction: column; gap: 8px; }
+.category-item { background: var(--bg); border-radius: var(--radius-sm); padding: 12px; }
+.category-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.category-item-name { font-size: 13px; font-weight: 600; }
+.category-item-count { font-size: 11px; color: var(--text-muted); }
+.category-item-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.category-item-badges .badge { font-size: 10px; padding: 2px 8px; border-radius: 8px; background: rgba(244,67,54,0.08); color: var(--red); border: 1px solid rgba(244,67,54,0.12); }
+.category-item.ok { border-left: 3px solid var(--green); }
+.category-item.warn { border-left: 3px solid var(--orange); }
+.category-item.bad { border-left: 3px solid var(--red); }
+
+@media (max-width: 768px) {
+  .province-grid { gap: 8px; }
+  .province-card { flex: 0 0 150px; padding: 12px; }
+  .top-carousel { grid-template-columns: 1fr; }
+  .drawer { width: 100%; max-width: 100vw; }
+  .drawer-info-grid { grid-template-columns: 1fr; }
+}
+.drawer-device-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; padding: 8px 14px; border-radius: 20px; background: var(--primary-light); color: var(--primary-dark); font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; transition: all 0.2s; }
+.drawer-device-link:hover { background: var(--primary); color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>气象站数据监控系统</h1>
+    <div class="subtitle">Weather Station Data Monitoring & Visualization</div>
+  </div>
+  <div class="nav">
+    <a href="/" class="active">站点状态</a>
+    <a href="/overview">综合看板</a>
+  </div>
+  <div class="status-bar" id="statusBar">
+    <div class="status-item">
+      <div class="num" id="totalStations">0</div>
+      <div class="label">总站数</div>
+    </div>
+    <div class="status-item">
+      <div class="num" id="onlineCount">0</div>
+      <div class="label">在线</div>
+    </div>
+    <div class="status-item">
+      <div class="num" id="alarmCount">0</div>
+      <div class="label">报警</div>
+    </div>
+    <div class="status-item">
+      <div class="num" id="checkedItems">0</div>
+      <div class="label">检测项</div>
+    </div>
+  </div>
+</div>
+
+<div id="errorBar" class="error-bar" style="display:none;"></div>
+
+<div class="container">
+
+  <div class="chart-card">
+    <div class="chart-header">
+      <div class="chart-title">报警趋势</div>
+      <div class="chart-controls">
+        <span class="carousel-info" id="carouselInfo" style="display:none;">轮播中...</span>
+        <button class="btn-play" id="btnPlayPause" onclick="togglePlayPause()">❚❚ 暂停</button>
+        <select id="alarmStationSelect" onchange="onAlarmStationChange()">
+          <option value="__carousel__">轮播模式</option>
+        </select>
+        <div class="btn-group" id="alarmRangeBtns">
+          <button class="btn-time" data-hours="1">1h</button>
+          <button class="btn-time" data-hours="6">6h</button>
+          <button class="btn-time active" data-hours="24">24h</button>
+          <button class="btn-time" data-hours="72">3d</button>
+          <button class="btn-time" data-hours="168">7d</button>
+        </div>
+      </div>
+    </div>
+    <div id="alarmChart" class="chart-box"></div>
+  </div>
+
+  <div class="filter-bar">
+    <input type="text" id="searchInput" placeholder="搜索站号、站名、厂商..." oninput="filterStations()">
+    <select id="filterProvince" onchange="filterStations()">
+      <option value="all">全部省份</option>
+    </select>
+    <select id="filterStatus" onchange="filterStations()">
+      <option value="all">全部站点</option>
+      <option value="online">在线</option>
+      <option value="offline">离线</option>
+      <option value="alarm">有报警</option>
+    </select>
+    <select id="filterSort" onchange="filterStations()">
+      <option value="default">默认排序</option>
+      <option value="arrival_asc">到报率升序</option>
+      <option value="alarm_desc">告警数降序</option>
+      <option value="offline_first">离线优先</option>
+    </select>
+  </div>
+
+  <div id="stationGrid" class="station-grid"></div>
+
+  <div class="chart-card">
+    <div class="chart-header">
+      <div class="chart-title">设备数值曲线</div>
+      <div class="chart-controls">
+        <select id="valueStation" onchange="updateValueChart()"></select>
+        <select id="valueItem" onchange="updateValueChart()">
+          <option value="wA">电路板温度 (wA)</option>
+          <option value="wB">探测器温度 (wB)</option>
+          <option value="wC">腔体温度 (wC)</option>
+          <option value="wD">恒温器温度 (wD)</option>
+          <option value="wE">机箱温度 (wE)</option>
+          <option value="xB">外接电源电压 (xB)</option>
+          <option value="xC">蓄电池电压 (xC)</option>
+          <option value="xF">当前工作电流 (xF)</option>
+          <option value="xH">蓄电池电量 (xH)</option>
+          <option value="uD">通风速度 (uD)</option>
+          <option value="uE">通风罩转速 (uE)</option>
+        </select>
+        <div class="btn-group" id="valueRangeBtns">
+          <button class="btn-time" data-hours="1">1h</button>
+          <button class="btn-time active" data-hours="6">6h</button>
+          <button class="btn-time" data-hours="24">24h</button>
+          <button class="btn-time" data-hours="72">3d</button>
+        </div>
+      </div>
+    </div>
+    <div id="valueChart" class="chart-box"></div>
+  </div>
+</div>
+
+<div class="footer" id="refreshInfo">正在加载数据...</div>
+
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="stationDrawer">
+  <div class="drawer-header">
+    <div>
+      <div class="drawer-title" id="drawerTitle">--</div>
+      <div class="drawer-subtitle" id="drawerSubtitle">--</div>
+    </div>
+    <button class="drawer-close" onclick="closeDrawer()">×</button>
+  </div>
+  <div class="drawer-body" id="drawerBody">
+    <!-- dynamic content -->
+  </div>
+</div>
+
+<script>
+const ALARM_COLORS = ['#2196f3','#42a5f5','#64b5f6','#90caf9'];
+let allStations = [];
+let allRegions = [];
+let selectedProvince = 'all';
+let alarmChart = null;
+let valueChart = null;
+let alarmRange = 24;
+let valueRange = 6;
+let alarmChartData = null;
+let carouselIndex = 0;
+let carouselTimer = null;
+let isPlaying = true;
+
+const TOP_TYPE_MAP = { topLowRate: 'lowest', topOffline: 'offline', topAlarms: 'alarms' };
+const RESTORE_BTN_MAP = { lowest: 'restoreLowest', offline: 'restoreOffline', alarms: 'restoreAlarms' };
+let topStationsData = null;
+let hiddenTopStations = loadHiddenTopStations();
+
+function loadHiddenTopStations() {
+  const result = { lowest: new Set(), offline: new Set(), alarms: new Set() };
+  try {
+    for (const type of Object.keys(result)) {
+      const raw = localStorage.getItem('weather_monitor_hidden_top_' + type);
+      if (raw) {
+        JSON.parse(raw).forEach(id => result[type].add(String(id)));
+      }
+    }
+  } catch (e) {
+    console.error('Load hidden tops error:', e);
+  }
+  return result;
+}
+
+function saveHiddenTopStations() {
+  try {
+    for (const type of Object.keys(hiddenTopStations)) {
+      localStorage.setItem('weather_monitor_hidden_top_' + type, JSON.stringify(Array.from(hiddenTopStations[type])));
+    }
+  } catch (e) {
+    console.error('Save hidden tops error:', e);
+  }
+}
+
+function hideTopStation(type, id) {
+  hiddenTopStations[type].add(id);
+  saveHiddenTopStations();
+  renderTopLists();
+}
+
+function restoreTopStations(type) {
+  hiddenTopStations[type].clear();
+  saveHiddenTopStations();
+  renderTopLists();
+}
+
+function renderTopLists() {
+  if (!topStationsData) return;
+  renderTopList('topLowRate', 'lowest', topStationsData.lowest_arrival_rate, true);
+  renderTopList('topOffline', 'offline', topStationsData.longest_offline, false);
+  renderTopList('topAlarms', 'alarms', topStationsData.most_alarms, true);
+}
+
+function updateRestoreButton(type) {
+  const btn = document.getElementById(RESTORE_BTN_MAP[type]);
+  if (!btn) return;
+  const count = hiddenTopStations[type].size;
+  if (count > 0) {
+    btn.style.display = 'inline-block';
+    btn.textContent = '恢复 (' + count + ')';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+function formatTime(t) {
+  if (!t) return '--';
+  return t.replace('T', ' ').substring(0, 19);
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#039;').replace(/"/g,'&quot;');
+}
+
+function isStale(arrivalTimeStr) {
+  if (!arrivalTimeStr || arrivalTimeStr === '--') return true;
+  try {
+    const t = new Date(arrivalTimeStr.replace(' ', 'T'));
+    const now = new Date();
+    return (now - t) > 3600000; // > 1 hour
+  } catch(e) { return true; }
+}
+
+function getRateClass(rate) {
+  if (rate < 90) return 'rate-bad';
+  if (rate < 96) return 'rate-warn';
+  return 'rate-good';
+}
+
+function getRateColor(rate) {
+  if (rate < 90) return 'var(--red)';
+  if (rate < 96) return 'var(--orange)';
+  return 'var(--green)';
+}
+
+function getRateLevel(rate) {
+  if (rate < 90) return 'bad';
+  if (rate < 96) return 'warn';
+  return 'good';
+}
+
+function formatProvinceRate(rate) {
+  return (rate || 0).toFixed(1) + '%';
+}
+
+function getCategoryName(key) {
+  const names = {
+    communication: '通信状态',
+    power: '供电状态',
+    temperature: '温度状态',
+    heating: '加热状态',
+    ventilation: '通风状态',
+    pollution: '污染状态',
+    data_quality: '数据质量',
+    other: '其他状态'
+  };
+  return names[key] || key;
+}
+
+async function loadRegions() {
+  try {
+    const resp = await fetch('/api/regions');
+    allRegions = await resp.json();
+    renderProvinceCards();
+    populateProvinceFilter();
+  } catch (e) {
+    console.error('Load regions error:', e);
+  }
+}
+
+function renderProvinceCards() {
+  const grid = document.getElementById('provinceGrid');
+  if (!grid || !allRegions.length) return;
+  grid.innerHTML = allRegions.map(r => {
+    const rateClass = getRateLevel(r.avg_arrival_rate);
+    const onlineRate = r.total > 0 ? (r.online / r.total * 100).toFixed(1) : '0.0';
+    const activeClass = selectedProvince === r.province ? 'active' : '';
+    return '<div class="province-card ' + activeClass + '" data-province="' + escHtml(r.province) + '">' +
+      '<div class="prov-name">' + escHtml(r.province) + '</div>' +
+      '<div class="prov-count">站点 ' + r.online + '/' + r.total + ' 在线</div>' +
+      '<div class="prov-rate ' + rateClass + '">' + formatProvinceRate(r.avg_arrival_rate) + '</div>' +
+      '<div class="prov-bar"><div class="prov-bar-fill ' + rateClass + '" style="width:' + onlineRate + '%"></div></div>' +
+      '<div class="prov-badges">' +
+        (r.alarm_count > 0 ? '<span class="prov-badge alarm">告警 ' + r.alarm_count + '</span>' : '') +
+        (r.offline > 0 ? '<span class="prov-badge offline">离线 ' + r.offline + '</span>' : '') +
+        (r.low_rate_count > 0 ? '<span class="prov-badge low">低率 ' + r.low_rate_count + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  grid.querySelectorAll('.province-card').forEach(card => {
+    card.addEventListener('click', () => {
+      selectProvince(card.dataset.province);
+    });
+  });
+}
+
+function populateProvinceFilter() {
+  const sel = document.getElementById('filterProvince');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="all">全部省份</option>' +
+    allRegions.map(r => '<option value="' + escHtml(r.province) + '">' + escHtml(r.province) + ' (' + r.total + ')</option>').join('');
+  sel.value = current;
+}
+
+function selectProvince(province) {
+  selectedProvince = selectedProvince === province ? 'all' : province;
+  const sel = document.getElementById('filterProvince');
+  if (sel) sel.value = selectedProvince;
+  renderProvinceCards();
+  filterStations();
+}
+
+async function loadTopStations() {
+  try {
+    const resp = await fetch('/api/top?limit=50');
+    const data = await resp.json();
+    topStationsData = data;
+    renderTopLists();
+    initTopCarousel();
+  } catch (e) {
+    console.error('Load top error:', e);
+  }
+}
+
+function renderTopList(elementId, listType, list, redValue) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const hidden = hiddenTopStations[listType] || new Set();
+  const visible = (list || []).filter(item => !hidden.has(item.id)).slice(0, 5);
+  if (visible.length === 0) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:10px;">' +
+      ((list && list.length > 0) ? '已隐藏全部站点' : '暂无数据') + '</div>';
+    updateRestoreButton(listType);
+    return;
+  }
+  el.innerHTML = visible.map((item, idx) => {
+    const rankClass = idx === 0 ? 'rank-1' : (idx === 1 ? 'rank-2' : (idx === 2 ? 'rank-3' : 'rank-other'));
+    return '<div class="top-item" onclick="openDrawer(\'' + escHtml(item.id) + '\')">' +
+      '<div class="top-rank ' + rankClass + '">' + (idx + 1) + '</div>' +
+      '<div class="top-info">' +
+        '<div class="top-name">' + escHtml(item.name) + ' ' + escHtml(item.id) + '</div>' +
+        '<div class="top-province">' + escHtml(item.province || '未知省份') + '</div>' +
+      '</div>' +
+      '<div class="top-value" style="color:' + (redValue ? 'var(--red)' : 'var(--orange)') + '">' + escHtml(item.label) + '</div>' +
+      '<button class="btn-hide" title="不再关注" onclick="event.stopPropagation(); hideTopStation(\'' + escHtml(listType) + '\', \'' + escHtml(item.id) + '\')">×</button>' +
+    '</div>';
+  }).join('');
+  updateRestoreButton(listType);
+}
+
+let topCarouselTimer = null;
+let topCarouselIndex = 0;
+
+function initTopCarousel() {
+  const carousel = document.getElementById('topCarousel');
+  const dots = document.getElementById('topDots');
+  if (!carousel || !dots) return;
+  const cards = carousel.querySelectorAll('.top-card');
+  if (cards.length === 0) return;
+
+  dots.innerHTML = '';
+  cards.forEach((_, idx) => {
+    const dot = document.createElement('div');
+    dot.className = 'top-dot' + (idx === 0 ? ' active' : '');
+    dot.onclick = () => scrollTopCarousel(idx);
+    dots.appendChild(dot);
+  });
+
+  if (topCarouselTimer) clearInterval(topCarouselTimer);
+  topCarouselTimer = setInterval(() => {
+    topCarouselIndex = (topCarouselIndex + 1) % cards.length;
+    scrollTopCarousel(topCarouselIndex);
+  }, 5000);
+}
+
+function scrollTopCarousel(index) {
+  const carousel = document.getElementById('topCarousel');
+  const dots = document.getElementById('topDots');
+  if (!carousel || !dots) return;
+  const cards = carousel.querySelectorAll('.top-card');
+  if (index < 0 || index >= cards.length) return;
+  topCarouselIndex = index;
+  const card = cards[index];
+  carousel.scrollTo({ left: card.offsetLeft - carousel.offsetLeft, behavior: 'smooth' });
+  dots.querySelectorAll('.top-dot').forEach((d, i) => {
+    d.classList.toggle('active', i === index);
+  });
+}
+
+function updateDashboard(data) {
+  if (!data) return;
+  const summary = data.summary || {};
+  const stations = data.stations || [];
+
+  document.getElementById('totalStations').textContent = summary.total || 0;
+  document.getElementById('onlineCount').textContent = summary.online || 0;
+  document.getElementById('alarmCount').textContent = summary.alarms || 0;
+  document.getElementById('checkedItems').textContent = summary.checked || 0;
+
+  document.getElementById('lastUpdate').textContent = formatTime(data.last_update) || '--';
+
+  const errorBar = document.getElementById('errorBar');
+  if (data.error) {
+    errorBar.textContent = '\u26A0\uFE0F ' + data.error;
+    errorBar.style.display = 'block';
+  } else {
+    errorBar.style.display = 'none';
+  }
+
+  allStations = stations.map(s => ({
+    ...s,
+    min_time: formatTime(s.min_time),
+    max_time: formatTime(s.max_time),
+    last_arrival_time: formatTime(s.last_arrival_time),
+    province: (s.province || '未知省份')
+  }));
+  filterStations();
+  populateStationSelect();
+  populateAlarmStationSelect();
+  loadRegions();
+  document.getElementById('refreshInfo').textContent =
+    '数据更新于 ' + (data.last_update || '--') + ' | 每 ' + (ENV_REFRESH_INTERVAL || 30) + ' 秒自动刷新';
+}
+
+function populateStationSelect() {
+  const sel = document.getElementById('valueStation');
+  const currentVal = sel.value;
+  sel.innerHTML = '';
+  allStations.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.id + ' ' + s.name;
+    sel.appendChild(opt);
+  });
+  if (currentVal) sel.value = currentVal;
+}
+
+function populateAlarmStationSelect() {
+  const sel = document.getElementById('alarmStationSelect');
+  const currentVal = sel.value;
+  // Keep the first option (carousel mode)
+  const firstOpt = sel.options[0];
+  sel.innerHTML = '';
+  sel.appendChild(firstOpt);
+  allStations.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name + ' ' + s.id;
+    sel.appendChild(opt);
+  });
+  if (currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
+    sel.value = currentVal;
+  } else {
+    sel.value = '__carousel__';
+  }
+}
+
+function renderStations(stations) {
+  const grid = document.getElementById('stationGrid');
+  if (stations.length === 0) {
+    grid.innerHTML = '<div style="text-align:center;padding:60px;color:var(--text-muted);font-size:14px;">没有匹配的站点</div>';
+    return;
+  }
+  grid.innerHTML = stations.map(s => {
+    const hasAlarm = s.alarm_count > 0;
+    const isOnline = s.online;
+    const statusClass = hasAlarm ? 'alarm' : (isOnline ? 'online' : 'offline');
+    const stale = isStale(s.last_arrival_time);
+    const rateClass = getRateClass(s.arrival_rate_24h || 0);
+    const timeClass = stale ? 'stale-time' : '';
+
+    let alarmsHtml = '';
+    if (hasAlarm) {
+      alarmsHtml = '<div class="alarm-list">' +
+        s.alarms.map(a => '<span class="alarm-item">' + escHtml(a) + '</span>').join('') +
+        '</div>';
+    } else if (isOnline) {
+      alarmsHtml = '<div class="no-alarms">\u2713 正常</div>';
+    } else {
+      alarmsHtml = '<div class="no-alarms offline">\u2014 无数据</div>';
+    }
+
+    return '<div class="station-card ' + (isOnline ? '' : 'offline') + ' ' + (hasAlarm ? 'has-alarm' : '') + ' ' + (stale ? 'stale' : '') + '" onclick="openDrawer(\'' + escHtml(s.id) + '\')">' +
+      '<div class="station-header">' +
+        '<div class="indicator ' + statusClass + '"></div>' +
+        '<span class="st-name">' + escHtml(s.name) + '</span>' +
+        '<span class="st-id">' + escHtml(s.id) + '</span>' +
+        '<span class="st-vendor" title="厂商：' + escHtml(s.vendor) + '">' + escHtml(s.province || '未知省份') + '</span>' +
+      '</div>' +
+      '<div class="station-body">' +
+        '<div class="station-meta">' +
+          '<span><span class="label">记录数:</span> ' + s.records + '</span>' +
+          '<span><span class="label">仪器数:</span> ' + s.devices + '</span>' +
+          '<span title="' + s.min_time + '"><span class="label">最早:</span> ' + (s.min_time || '--') + '</span>' +
+          '<span title="' + s.max_time + '"><span class="label">最新:</span> ' + (s.max_time || '--') + '</span>' +
+          '<span><span class="label">最后到达:</span> <span class="' + timeClass + '">' + (s.last_arrival_time || '--') + '</span></span>' +
+          '<span><span class="label">24h到报率:</span> <span class="' + rateClass + '">' + (s.arrival_rate_24h || 0).toFixed(1) + '%</span></span>' +
+        '</div>' +
+        alarmsHtml +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function filterStations() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const status = document.getElementById('filterStatus').value;
+  const province = document.getElementById('filterProvince').value;
+  const sort = document.getElementById('filterSort').value;
+  selectedProvince = province;
+  renderProvinceCards();
+
+  let filtered = allStations;
+  if (search) {
+    filtered = filtered.filter(s =>
+      s.id.toLowerCase().includes(search) ||
+      s.name.toLowerCase().includes(search) ||
+      s.vendor.toLowerCase().includes(search)
+    );
+  }
+  if (province !== 'all') {
+    filtered = filtered.filter(s => (s.province || '未知省份') === province);
+  }
+  if (status === 'online') filtered = filtered.filter(s => s.online);
+  else if (status === 'offline') filtered = filtered.filter(s => !s.online);
+  else if (status === 'alarm') filtered = filtered.filter(s => s.alarm_count > 0);
+
+  if (sort === 'arrival_asc') {
+    filtered.sort((a, b) => (a.arrival_rate_24h || 0) - (b.arrival_rate_24h || 0));
+  } else if (sort === 'alarm_desc') {
+    filtered.sort((a, b) => b.alarm_count - a.alarm_count);
+  } else if (sort === 'offline_first') {
+    filtered.sort((a, b) => (a.online === b.online) ? 0 : (a.online ? 1 : -1));
+  }
+
+  renderStations(filtered);
+}
+
+function focusStation(id) {
+  const sel = document.getElementById('valueStation');
+  if (sel) { sel.value = id; updateValueChart(); }
+  document.getElementById('valueChart').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ---- Station Detail Drawer ----
+let currentDrawerId = null;
+
+function openDrawer(id) {
+  currentDrawerId = id;
+  const overlay = document.getElementById('drawerOverlay');
+  const drawer = document.getElementById('stationDrawer');
+  overlay.classList.add('open');
+  drawer.classList.add('open');
+  loadDrawerContent(id);
+}
+
+function closeDrawer() {
+  currentDrawerId = null;
+  const overlay = document.getElementById('drawerOverlay');
+  const drawer = document.getElementById('stationDrawer');
+  overlay.classList.remove('open');
+  drawer.classList.remove('open');
+}
+
+async function loadDrawerContent(id) {
+  try {
+    const resp = await fetch('/api/station/' + encodeURIComponent(id));
+    const detail = await resp.json();
+    if (!detail) return;
+    renderDrawer(detail);
+  } catch (e) {
+    console.error('Load drawer error:', e);
+  }
+}
+
+function renderDrawer(detail) {
+  const meta = detail.meta || {};
+  const status = detail.status || {};
+  document.getElementById('drawerTitle').textContent = (status.name || meta.station_name || '未知站点') + ' ' + (status.id || meta.station_id || '');
+  document.getElementById('drawerSubtitle').textContent = (meta.province || '未知省份') + ' · ' + (meta.station_type || '未知站型');
+
+  const statusBadge = status.online
+    ? '<span class="drawer-status-badge online"><span>●</span> 在线</span>'
+    : '<span class="drawer-status-badge offline"><span>●</span> 离线</span>';
+  const rateClass = getRateClass(status.arrival_rate_24h || 0);
+
+  let categoriesHtml = '';
+  const cats = detail.categories || {};
+  const catKeys = ['communication', 'power', 'temperature', 'heating', 'ventilation', 'pollution', 'data_quality', 'other'];
+  catKeys.forEach(key => {
+    const cat = cats[key];
+    if (!cat) return;
+    const cls = cat.abnormal > 0 ? 'bad' : (cat.total > 0 ? 'ok' : '');
+    const badges = cat.items.map(item => '<span class="badge">' + escHtml(item.alarm) + '</span>').join('');
+    categoriesHtml += '<div class="category-item ' + cls + '">' +
+      '<div class="category-item-header">' +
+        '<span class="category-item-name">' + getCategoryName(key) + '</span>' +
+        '<span class="category-item-count">异常 ' + cat.abnormal + '/' + cat.total + '</span>' +
+      '</div>' +
+      (badges ? '<div class="category-item-badges">' + badges + '</div>' : '') +
+    '</div>';
+  });
+  if (!categoriesHtml) {
+    categoriesHtml = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px;">当前无状态数据</div>';
+  }
+
+  let alarmsHtml = '';
+  if (status.alarms && status.alarms.length > 0) {
+    alarmsHtml = '<div class="alarm-list" style="margin-top:8px;">' +
+      status.alarms.map(a => '<span class="alarm-item">' + escHtml(a) + '</span>').join('') +
+    '</div>';
+  } else {
+    alarmsHtml = '<div class="no-alarms">✓ 当前无告警</div>';
+  }
+
+  document.getElementById('drawerBody').innerHTML =
+    '<div class="drawer-section">' +
+      '<div class="drawer-section-title">实时状态</div>' +
+      '<div class="drawer-status-row">' + statusBadge +
+        '<span class="' + rateClass + '" style="font-weight:700;">24h到报率 ' + (status.arrival_rate_24h || 0).toFixed(1) + '%</span>' +
+      '</div>' +
+      '<div class="drawer-info-grid">' +
+        '<div class="drawer-info-item"><div class="label">最后到达</div><div class="value">' + (status.last_arrival_time || '--') + '</div></div>' +
+        '<div class="drawer-info-item"><div class="label">当前告警</div><div class="value">' + (status.alarm_count || 0) + ' 个</div></div>' +
+        '<div class="drawer-info-item"><div class="label">记录数</div><div class="value">' + (status.records || 0) + '</div></div>' +
+        '<div class="drawer-info-item"><div class="label">仪器数</div><div class="value">' + (status.devices || 0) + '</div></div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="drawer-section">' +
+      '<div class="drawer-section-title">站点信息</div>' +
+      '<div class="drawer-info-grid">' +
+        '<div class="drawer-info-item"><div class="label">省份</div><div class="value">' + escHtml(meta.province || '未知省份') + '</div></div>' +
+        '<div class="drawer-info-item"><div class="label">厂商</div><div class="value">' + escHtml(status.vendor || '未知') + '</div></div>' +
+        '<div class="drawer-info-item"><div class="label">经度</div><div class="value">' + (meta.longitude || 0).toFixed(4) + '°</div></div>' +
+        '<div class="drawer-info-item"><div class="label">纬度</div><div class="value">' + (meta.latitude || 0).toFixed(4) + '°</div></div>' +
+        '<div class="drawer-info-item"><div class="label">海拔</div><div class="value">' + (meta.altitude || 0).toFixed(1) + ' m</div></div>' +
+        '<div class="drawer-info-item"><div class="label">站型</div><div class="value">' + escHtml(meta.station_type || '未知') + '</div></div>' +
+        (meta.is_acid_rain ? '<div class="drawer-info-item"><div class="label">特殊标识</div><div class="value" style="color:var(--primary)">酸雨观测站</div></div>' : '') +
+        (meta.is_reference_radiation ? '<div class="drawer-info-item"><div class="label">特殊标识</div><div class="value" style="color:var(--primary)">基准辐射站</div></div>' : '') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="drawer-section">' +
+      '<div class="drawer-section-title">状态分类</div>' +
+      '<div class="category-list">' + categoriesHtml + '</div>' +
+    '</div>' +
+
+    '<div class="drawer-section">' +
+      '<div class="drawer-section-title">设备状态</div>' +
+      '<a class="drawer-device-link" href="/station/' + escHtml(status.id) + '/devices">查看站内设备状态 →</a>' +
+    '</div>' +
+
+    '<div class="drawer-section">' +
+      '<div class="drawer-section-title">当前告警</div>' + alarmsHtml +
+    '</div>';
+}
+
+// ---- Carousel Logic ----
+function startCarousel() {
+  if (carouselTimer) clearInterval(carouselTimer);
+  if (!isPlaying) return;
+  carouselTimer = setInterval(() => {
+    if (!alarmChartData || !alarmChartData.series || alarmChartData.series.length === 0) return;
+    carouselIndex = (carouselIndex + 1) % alarmChartData.series.length;
+    renderAlarmSingleStation(carouselIndex, true);
+  }, 10000);
+}
+
+function stopCarousel() {
+  if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = null; }
+}
+
+function togglePlayPause() {
+  isPlaying = !isPlaying;
+  const btn = document.getElementById('btnPlayPause');
+  const info = document.getElementById('carouselInfo');
+  if (isPlaying) {
+    btn.textContent = '\u275A\u275A 暂停';
+    info.style.display = 'inline';
+    startCarousel();
+  } else {
+    btn.textContent = '\u25B6 播放';
+    info.style.display = 'none';
+    stopCarousel();
+  }
+}
+
+function onAlarmStationChange() {
+  const sel = document.getElementById('alarmStationSelect');
+  const val = sel.value;
+  if (val === '__carousel__') {
+    isPlaying = true;
+    document.getElementById('btnPlayPause').textContent = '\u275A\u275A 暂停';
+    document.getElementById('carouselInfo').style.display = 'inline';
+    startCarousel();
+    renderAlarmSingleStation(carouselIndex, true);
+  } else {
+    isPlaying = false;
+    document.getElementById('btnPlayPause').textContent = '\u25B6 播放';
+    document.getElementById('carouselInfo').style.display = 'none';
+    stopCarousel();
+    const idx = alarmChartData.series.findIndex(s => s.name.includes(val));
+    if (idx >= 0) {
+      carouselIndex = idx;
+      renderAlarmSingleStation(idx, false);
+    }
+  }
+}
+
+function renderAlarmSingleStation(index, animate) {
+  if (!alarmChartData || !alarmChartData.series[index]) return;
+  const series = alarmChartData.series[index];
+  const info = document.getElementById('carouselInfo');
+  info.textContent = series.name + ' (' + (index + 1) + '/' + alarmChartData.series.length + ')';
+
+  alarmChart.setOption({
+    legend: { data: [series.name] },
+    series: [{
+      name: series.name,
+      type: 'line',
+      smooth: true,
+      symbol: 'none',
+      lineStyle: { width: 3, color: ALARM_COLORS[0] },
+      itemStyle: { color: ALARM_COLORS[0] },
+      areaStyle: {
+        color: {
+          type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [
+            { offset: 0, color: 'rgba(33,150,243,0.2)' },
+            { offset: 1, color: 'rgba(33,150,243,0.02)' }
+          ]
+        }
+      },
+      data: series.data,
+      animationDuration: animate ? 800 : 0,
+      animationEasing: 'cubicInOut'
+    }]
+  });
+}
+
+// ---- Time range button handler ----
+document.querySelectorAll('.btn-group').forEach(group => {
+  group.addEventListener('click', function(e) {
+    const btn = e.target.closest('.btn-time');
+    if (!btn) return;
+    group.querySelectorAll('.btn-time').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const hours = parseInt(btn.dataset.hours);
+    if (group.id === 'alarmRangeBtns') {
+      alarmRange = hours;
+      updateAlarmChart();
+    } else if (group.id === 'valueRangeBtns') {
+      valueRange = hours;
+      updateValueChart();
+    }
+  });
+});
+
+// ---- Alarm Chart ----
+async function updateAlarmChart() {
+  try {
+    const resp = await fetch('/api/chart/alarms?hours=' + alarmRange);
+    alarmChartData = await resp.json();
+    if (!alarmChart) {
+      alarmChart = echarts.init(document.getElementById('alarmChart'), null, { renderer: 'canvas' });
+    }
+
+    alarmChart.setOption({
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        borderColor: '#e8edf4',
+        borderWidth: 1,
+        textStyle: { color: '#1a2332', fontSize: 12 },
+        formatter: function(params) {
+          let tip = '<div style="font-weight:600;margin-bottom:4px;">' + params[0].axisValue + '</div>';
+          params.forEach(p => {
+            tip += '<div style="display:flex;align-items:center;gap:6px;">' +
+              '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + p.color + ';"></span>' +
+              p.seriesName + ': <strong>' + p.value + '</strong> 次报警</div>';
+          });
+          return tip;
+        }
+      },
+      legend: {
+        type: 'scroll',
+        bottom: 0,
+        icon: 'circle',
+        itemWidth: 8,
+        itemHeight: 8,
+        textStyle: { fontSize: 11, color: '#5a6a7a' }
+      },
+      grid: { left: 50, right: 20, top: 10, bottom: 40 },
+      xAxis: {
+        type: 'category',
+        data: alarmChartData.time,
+        axisLine: { lineStyle: { color: '#e8edf4' } },
+        axisLabel: { fontSize: 11, color: '#9aaaba' },
+        splitLine: { show: true, lineStyle: { color: '#f0f6ff', type: 'dashed' } }
+      },
+      yAxis: {
+        type: 'value',
+        name: '报警次数',
+        nameTextStyle: { fontSize: 11, color: '#9aaaba' },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { fontSize: 11, color: '#9aaaba' },
+        splitLine: { lineStyle: { color: '#f0f6ff', type: 'dashed' } }
+      },
+      dataZoom: [
+        { type: 'inside', start: 0, end: 100 },
+        { type: 'slider', bottom: 28, height: 16, borderColor: '#e8edf4', fillerColor: 'rgba(33,150,243,0.1)' }
+      ],
+      series: []
+    }, true);
+
+    // Start carousel
+    carouselIndex = 0;
+    if (isPlaying) {
+      startCarousel();
+      renderAlarmSingleStation(0, false);
+    } else {
+      const selVal = document.getElementById('alarmStationSelect').value;
+      if (selVal !== '__carousel__') {
+        const idx = alarmChartData.series.findIndex(s => s.name.includes(selVal));
+        if (idx >= 0) renderAlarmSingleStation(idx, false);
+      } else {
+        renderAlarmSingleStation(0, false);
+      }
+    }
+    alarmChart.resize();
+  } catch (e) {
+    console.error('Alarm chart error:', e);
+  }
+}
+
+// ---- Value Chart ----
+async function updateValueChart() {
+  try {
+    const station = document.getElementById('valueStation').value;
+    const item = document.getElementById('valueItem').value;
+    const resp = await fetch('/api/chart/values?station=' + station + '&item=' + item + '&hours=' + valueRange);
+    const data = await resp.json();
+    if (!valueChart) {
+      valueChart = echarts.init(document.getElementById('valueChart'), null, { renderer: 'canvas' });
+    }
+    valueChart.setOption({
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        borderColor: '#e8edf4',
+        borderWidth: 1,
+        textStyle: { color: '#1a2332', fontSize: 12 },
+        formatter: function(params) {
+          const p = params[0];
+          return '<div style="font-weight:600;margin-bottom:4px;">' + p.axisValue + '</div>' +
+            '<div>' + data.item_name + ': <strong>' + p.value + '</strong> ' + data.unit + '</div>';
+        }
+      },
+      grid: { left: 60, right: 30, top: 20, bottom: 50 },
+      xAxis: {
+        type: 'category',
+        data: data.time,
+        axisLine: { lineStyle: { color: '#e8edf4' } },
+        axisLabel: { fontSize: 11, color: '#9aaaba', rotate: 30 },
+        splitLine: { show: true, lineStyle: { color: '#f0f6ff', type: 'dashed' } }
+      },
+      yAxis: {
+        type: 'value',
+        name: data.unit,
+        nameTextStyle: { fontSize: 11, color: '#9aaaba' },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { fontSize: 11, color: '#9aaaba' },
+        splitLine: { lineStyle: { color: '#f0f6ff', type: 'dashed' } }
+      },
+      dataZoom: [
+        { type: 'inside', start: 0, end: 100 },
+        { type: 'slider', bottom: 28, height: 16, borderColor: '#e8edf4', fillerColor: 'rgba(33,150,243,0.1)' }
+      ],
+      series: [{
+        name: data.station_name + ' - ' + data.item_name,
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { width: 2.5, color: '#2196f3' },
+        itemStyle: { color: '#2196f3' },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(33,150,243,0.25)' },
+              { offset: 1, color: 'rgba(33,150,243,0.02)' }
+            ]
+          }
+        },
+        markLine: {
+          silent: true,
+          data: [
+            { yAxis: 50, label: { formatter: '上限 50' }, lineStyle: { color: '#f44336', type: 'dashed', width: 1.5 } },
+            { yAxis: -10, label: { formatter: '下限 -10' }, lineStyle: { color: '#f44336', type: 'dashed', width: 1.5 } }
+          ]
+        },
+        data: data.values
+      }]
+    }, true);
+    valueChart.resize();
+  } catch (e) {
+    console.error('Value chart error:', e);
+  }
+}
+
+// ---- Resize handler ----
+window.addEventListener('resize', function() {
+  if (alarmChart) alarmChart.resize();
+  if (valueChart) valueChart.resize();
+});
+
+// ---- SSE + Fallback Polling ----
+const ENV_REFRESH_INTERVAL = 30;
+let sseConnected = false;
+let pollTimer = null;
+
+function startSSE() {
+  if (!window.EventSource) { startPolling(); return; }
+  const es = new EventSource('/api/events');
+  es.onopen = function() {
+    sseConnected = true;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    document.getElementById('refreshInfo').textContent = '已连接实时推送';
+  };
+  es.onmessage = function(e) {
+    try {
+      if (e.data === 'keep-alive') return;
+      const data = JSON.parse(e.data);
+      updateDashboard(data);
+    } catch (err) {
+      console.error('SSE parse error:', err);
+    }
+  };
+  es.onerror = function() {
+    sseConnected = false;
+    es.close();
+    document.getElementById('refreshInfo').textContent = '实时推送断开，启用轮询...';
+    startPolling();
+  };
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  fetchData();
+  pollTimer = setInterval(fetchData, ENV_REFRESH_INTERVAL * 1000);
+}
+
+async function fetchData() {
+  try {
+    const resp = await fetch('/api/status');
+    const data = await resp.json();
+    updateDashboard(data);
+    if (!sseConnected) {
+      document.getElementById('refreshInfo').textContent =
+        '数据更新于 ' + (data.last_update || '--') + ' | 轮询模式 (' + ENV_REFRESH_INTERVAL + 's)';
+    }
+  } catch (e) {
+    document.getElementById('refreshInfo').textContent = '无法连接服务器，正在重试...';
+  }
+}
+
+startSSE();
+
+// Initial chart load with delay
+setTimeout(function() {
+  updateAlarmChart();
+  setTimeout(updateValueChart, 200);
+}, 500);
+</script>
+</body>
+</html>

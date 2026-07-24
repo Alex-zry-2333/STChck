@@ -1,0 +1,181 @@
+[server]
+port = 8080
+refresh_interval_secs = 120
+
+[database]
+host = "10.10.1.59"
+port = 3306
+user = "root"
+password = "${DB_PASSWORD}"
+db = "cammoc_w"
+
+[cloud_database]
+host = "10.10.1.59"
+port = 3306
+user = "root"
+password = "${CLOUD_DB_PASSWORD}"
+db = "cammoc_cloud_w"
+
+[monitor]
+check_interval_minutes = 5
+simulation_mode = true
+
+[[stations]]
+id = "50936"
+name = "吉林白城"
+vendor = "华云"
+
+[[stations]]
+id = "50968"
+name = "黑龙江尚志"
+vendor = "华云"
+
+[[stations]]
+id = "53399"
+name = "河北张北"
+vendor = "华云"
+
+[[stations]]
+id = "53942"
+name = "陕西洛川"
+vendor = "华云"
+
+[[stations]]
+id = "54333"
+name = "辽宁新民"
+vendor = "华云"
+
+[[stations]]
+id = "54416"
+name = "北京密云"
+vendor = "华云"
+
+[[stations]]
+id = "54808"
+name = "山东莘县"
+vendor = "华云"
+
+[[stations]]
+id = "56173"
+name = "四川红原"
+vendor = "华云"
+
+[[stations]]
+id = "56312"
+name = "西藏林芝"
+vendor = "华云"
+
+[[stations]]
+id = "57633"
+name = "重庆酉阳"
+vendor = "华云"
+
+[[stations]]
+id = "57958"
+name = "广西雁山"
+vendor = "华云"
+
+[[stations]]
+id = "58005"
+name = "河南商丘"
+vendor = "华云"
+
+[[stations]]
+id = "58457"
+name = "浙江杭州"
+vendor = "华云"
+
+[[stations]]
+id = "58737"
+name = "福建建瓯"
+vendor = "华云"
+
+[[stations]]
+id = "52983"
+name = "甘肃榆中"
+vendor = "天津"
+
+[[stations]]
+id = "53817"
+name = "宁夏固原"
+vendor = "天津"
+
+[[stations]]
+id = "51358"
+name = "新疆乌兰乌苏"
+vendor = "无锡"
+
+[[stations]]
+id = "52754"
+name = "青海刚察"
+vendor = "无锡"
+
+[[stations]]
+id = "52856"
+name = "青海共和"
+vendor = "无锡"
+
+[[stations]]
+id = "53963"
+name = "山西侯马"
+vendor = "无锡"
+
+[[stations]]
+id = "56739"
+name = "云南腾冲"
+vendor = "无锡"
+
+[[stations]]
+id = "57251"
+name = "湖北郧西"
+vendor = "无锡"
+
+[[stations]]
+id = "57793"
+name = "江西宜春"
+vendor = "无锡"
+
+[[stations]]
+id = "57832"
+name = "贵州三穗"
+vendor = "无锡"
+
+[[stations]]
+id = "57874"
+name = "湖南常宁"
+vendor = "无锡"
+
+[[stations]]
+id = "58141"
+name = "江苏淮安"
+vendor = "无锡"
+
+[[stations]]
+id = "58362"
+name = "上海宝山"
+vendor = "无锡"
+
+[[stations]]
+id = "58437"
+name = "安徽黄山"
+vendor = "无锡"
+
+[[stations]]
+id = "59758"
+name = "海南海口"
+vendor = "无锡"
+
+[[stations]]
+id = "59294"
+name = "广州增城"
+vendor = "广东"
+
+[[stations]]
+id = "52737"
+name = "青海德令哈"
+vendor = "无锡"
+
+[[stations]]
+id = "57914"
+name = "贵州花溪"
+vendor = "无锡"
