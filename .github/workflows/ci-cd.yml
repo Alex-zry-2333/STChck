@@ -1,0 +1,123 @@
+name: CI/CD - Un-tested to Tested
+
+on:
+  push:
+    branches:
+      - 'hw/un-tested-*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-and-promote:
+    name: Run Tests & Promote to Tested
+    runs-on: ubuntu-latest
+    
+    steps:
+      # ============================================
+      # Step 1: Checkout code
+      # ============================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ============================================
+      # Step 2: Setup Rust toolchain
+      # ============================================
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # ============================================
+      # Step 3: Cache dependencies
+      # ============================================
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # ============================================
+      # Step 4: Check code formatting
+      # ============================================
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # ============================================
+      # Step 5: Run Clippy (lint)
+      # ============================================
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true
+
+      # ============================================
+      # Step 6: Build project
+      # ============================================
+      - name: Build
+        run: cargo build --verbose
+
+      # ============================================
+      # Step 7: Run tests
+      # ============================================
+      - name: Run tests
+        id: run_tests
+        run: cargo test --verbose
+
+      # ============================================
+      # Step 8: Promote to tested branch (only if tests pass)
+      # ============================================
+      - name: Promote to hw/tested branch
+        if: steps.run_tests.outcome == 'success'
+        run: |
+          echo "🧪 Tests passed! Promoting to hw/tested branch..."
+          
+          # Configure git
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          
+          # Get current branch name
+          SOURCE_BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "Source branch: $SOURCE_BRANCH"
+          
+          # Fetch the tested branch if it exists
+          git fetch origin hw/tested || echo "hw/tested branch does not exist yet"
+          
+          # Create or checkout tested branch
+          if git show-ref --verify --quiet refs/remotes/origin/hw/tested; then
+            echo "🔀 hw/tested branch exists, merging..."
+            git checkout -B hw/tested origin/hw/tested
+            git merge --no-ff "${{ github.sha }}" -m "✅ Auto-promote: Tests passed for ${SOURCE_BRANCH}
+
+            Source: ${SOURCE_BRANCH}
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.actor }}
+            Tests: PASSED"
+          else
+            echo "🆕 Creating hw/tested branch from current commit..."
+            git checkout -b hw/tested
+          fi
+          
+          # Push to hw/tested
+          git push origin hw/tested
+          
+          echo "✅ Successfully promoted to hw/tested branch!"
+
+      # ============================================
+      # Step 9: Notify on failure
+      # ============================================
+      - name: Notify on test failure
+        if: failure() && steps.run_tests.outcome == 'failure'
+        run: |
+          echo "❌ Tests FAILED for branch ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "The code will NOT be promoted to hw/tested branch."
+          exit 1

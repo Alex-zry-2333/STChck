@@ -3,6 +3,9 @@ mod db;
 mod models;
 mod monitor;
 
+#[cfg(test)]
+mod tests;
+
 use axum::{
     body::Body,
     extract::{Form, Path, Query, State},
