@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod license;
 mod models;
 mod monitor;
 
@@ -98,6 +99,7 @@ struct AppState {
     station_devices: RwLock<HashMap<String, models::StationDevicesResponse>>,
     devices_tx: broadcast::Sender<String>,
     session_tokens: RwLock<HashSet<String>>,
+    license_state: std::sync::Mutex<license::license::LicenseState>,
 }
 
 #[derive(serde::Serialize)]
@@ -139,6 +141,27 @@ struct ForecastQuery {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+
+    // ============================================================
+    // License verification (compile-time controlled)
+    // ============================================================
+    let license_state = license::license::verify();
+    
+    if license_state.expired {
+        tracing::warn!("╔════════════════════════════════════════════════════════════╗");
+        tracing::warn!("║  ⚠️  LICENSE EXPIRED — Running in DEGRADED MODE          ║");
+        tracing::warn!("║  Contact support to renew your license.                  ║");
+        tracing::warn!("╚════════════════════════════════════════════════════════════╝");
+    } else if license_state.invalid {
+        tracing::warn!("╔════════════════════════════════════════════════════════════╗");
+        tracing::warn!("║  ⚠️  NO VALID LICENSE — Running in evaluation mode       ║");
+        tracing::warn!("║  Please place a valid license.toml in the working dir.   ║");
+        tracing::warn!("╚════════════════════════════════════════════════════════════╝");
+    } else if license_state.hardware_mismatch {
+        tracing::error!("╔════════════════════════════════════════════════════════════╗");
+        tracing::error!("║  ❌ HARDWARE MISMATCH — License not valid for this machine ║");
+        tracing::error!("╚════════════════════════════════════════════════════════════╝");
+    }
 
     let mut cfg = config::Config::load("config.toml");
 
@@ -185,7 +208,37 @@ async fn main() {
         station_devices: RwLock::new(HashMap::new()),
         devices_tx,
         session_tokens: RwLock::new(HashSet::new()),
+        license_state: std::sync::Mutex::new(license_state.clone()),
     });
+
+    // ============================================================
+    // Runtime license reminder (degraded mode)
+    // ============================================================
+    if license_state.expired || license_state.invalid {
+        let reminder_interval = license_state.license_info.as_ref()
+            .map(|l| l.features.reminder_interval_hours)
+            .unwrap_or(24);
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(reminder_interval * 3600));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            interval.tick().await; // skip first immediate tick
+            
+            loop {
+                interval.tick().await;
+                if license::license::is_expired() {
+                    tracing::warn!("╔════════════════════════════════════════════════════════════╗");
+                    tracing::warn!("║  ⏰ LICENSE REMINDER: Your license has EXPIRED.           ║");
+                    tracing::warn!("║  Please contact support to renew.                        ║");
+                    tracing::warn!("╚════════════════════════════════════════════════════════════╝");
+                } else if license::license::is_invalid() {
+                    tracing::warn!("╔════════════════════════════════════════════════════════════╗");
+                    tracing::warn!("║  ⏰ LICENSE REMINDER: No valid license file found.        ║");
+                    tracing::warn!("╚════════════════════════════════════════════════════════════╝");
+                }
+            }
+        });
+    }
 
     // Background refresh for monitor data; start immediately so HTTP comes up fast
     let state_clone = state.clone();
@@ -286,6 +339,7 @@ async fn main() {
         .route("/api/events", get(sse_handler))
         .route("/api/forecast", get(api_forecast))
         .route("/api/forecast/{id}", get(api_forecast_detail))
+        .route("/api/license", get(api_license))
         .fallback(static_handler)
         .route_layer(axum::middleware::from_fn(move |req, next| {
             let state = auth_state.clone();
@@ -317,6 +371,19 @@ async fn main() {
             "实时数据库"
         }
     );
+    // License status in startup banner
+    {
+        let lic = state.license_state.lock().unwrap();
+        if lic.expired {
+            tracing::info!("  License: ⚠️  EXPIRED (degraded mode)");
+        } else if lic.invalid {
+            tracing::info!("  License: ⚠️  INVALID / NOT FOUND (evaluation mode)");
+        } else if !lic.valid {
+            tracing::info!("  License: ❌ {}", lic.message);
+        } else {
+            tracing::info!("  License: ✅ {}", lic.message);
+        }
+    }
     tracing::info!("============================================================");
 
     let server = axum::serve(listener, app);
@@ -893,6 +960,11 @@ async fn api_forecast_detail(
     let meta = state.station_meta.get(&id);
     let result = monitor::generate_forecast_detail(&status, meta);
     Json(Some(result))
+}
+
+async fn api_license(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let license_state = state.license_state.lock().unwrap();
+    Json(license::license::get_status(&license_state))
 }
 
 async fn sse_handler(
