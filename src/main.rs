@@ -4,19 +4,26 @@ mod models;
 mod monitor;
 
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
-    response::{sse::{Event, Sse}, Html, IntoResponse, Json, Response},
+    body::Body,
+    extract::{Form, Path, Query, State},
+    http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode},
+    middleware::Next,
+    response::{
+        sse::{Event, Sse},
+        Html, IntoResponse, Json, Redirect, Response,
+    },
     routing::get,
     Router,
 };
+use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 #[cfg(target_os = "windows")]
 fn cleanup_previous_instances() {
@@ -42,7 +49,10 @@ fn cleanup_previous_instances() {
             }
             if let Ok(pid) = parts[1].parse::<u32>() {
                 if pid != current_pid {
-                    tracing::info!("发现已有 weather-monitor.exe 进程 (PID: {})，正在结束...", pid);
+                    tracing::info!(
+                        "发现已有 weather-monitor.exe 进程 (PID: {})，正在结束...",
+                        pid
+                    );
                     let _ = Command::new("taskkill")
                         .args(["/F", "/PID", &pid.to_string()])
                         .output();
@@ -84,6 +94,7 @@ struct AppState {
     station_meta: HashMap<String, models::StationMeta>,
     station_devices: RwLock<HashMap<String, models::StationDevicesResponse>>,
     devices_tx: broadcast::Sender<String>,
+    session_tokens: RwLock<HashSet<String>>,
 }
 
 #[derive(serde::Serialize)]
@@ -105,6 +116,23 @@ struct ValueQuery {
     hours: Option<i64>,
 }
 
+#[derive(Deserialize)]
+struct TopQuery {
+    #[serde(default = "default_top_limit")]
+    limit: usize,
+}
+
+#[derive(Deserialize)]
+struct LoginForm {
+    username: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct ForecastQuery {
+    station: Option<String>,
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -118,7 +146,7 @@ async fn main() {
     if let Ok(pwd) = std::env::var("CLOUD_DB_PASSWORD") {
         cfg.cloud_database.password = pwd;
     }
-    
+
     let (tx, _rx) = broadcast::channel::<String>(16);
     let (devices_tx, _devices_rx) = broadcast::channel::<String>(128);
 
@@ -153,6 +181,7 @@ async fn main() {
         station_meta,
         station_devices: RwLock::new(HashMap::new()),
         devices_tx,
+        session_tokens: RwLock::new(HashSet::new()),
     });
 
     // Background refresh for monitor data; start immediately so HTTP comes up fast
@@ -160,10 +189,13 @@ async fn main() {
     tokio::spawn(async move {
         // First load after a short delay so the web server binds first
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        let mut new_data = state_clone.db.query_monitor_data(
-            &state_clone.config.stations,
-            state_clone.config.monitor.check_interval_minutes as i32,
-        ).await;
+        let mut new_data = state_clone
+            .db
+            .query_monitor_data(
+                &state_clone.config.stations,
+                state_clone.config.monitor.check_interval_minutes as i32,
+            )
+            .await;
         enrich_station_meta(&mut new_data.stations, &state_clone.station_meta);
         if let Ok(json) = serde_json::to_string(&new_data) {
             let _ = state_clone.tx.send(json);
@@ -173,23 +205,26 @@ async fn main() {
             *data = new_data;
         }
 
-        let mut interval = tokio::time::interval(
-            tokio::time::Duration::from_secs(state_clone.config.server.refresh_interval_secs)
-        );
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+            state_clone.config.server.refresh_interval_secs,
+        ));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            let mut new_data = state_clone.db.query_monitor_data(
-                &state_clone.config.stations,
-                state_clone.config.monitor.check_interval_minutes as i32,
-            ).await;
+            let mut new_data = state_clone
+                .db
+                .query_monitor_data(
+                    &state_clone.config.stations,
+                    state_clone.config.monitor.check_interval_minutes as i32,
+                )
+                .await;
             enrich_station_meta(&mut new_data.stations, &state_clone.station_meta);
-            
+
             // Broadcast update via SSE
             if let Ok(json) = serde_json::to_string(&new_data) {
                 let _ = state_clone.tx.send(json);
             }
-            
+
             let mut data = state_clone.data.write().await;
             *data = new_data;
         }
@@ -200,7 +235,7 @@ async fn main() {
     tokio::spawn(async move {
         // 启动时立即预热一次缓存，避免前端首次访问时返回空数据
         refresh_station_devices_cache(&state_devices).await;
-        
+
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
@@ -211,7 +246,10 @@ async fn main() {
     });
 
     let port = if state.config.server.port > 65535 {
-        tracing::warn!("端口 {} 无效（超过 65535），使用 8080 代替", state.config.server.port);
+        tracing::warn!(
+            "端口 {} 无效（超过 65535），使用 8080 代替",
+            state.config.server.port
+        );
         8080u32
     } else {
         state.config.server.port
@@ -219,10 +257,16 @@ async fn main() {
     let refresh_interval = state.config.server.refresh_interval_secs;
     let is_simulation = state.db.simulation_mode;
 
+    let cors_layer = build_cors_layer(&state.config.auth.allowed_origins);
+
+    let auth_state = state.clone();
     let app = Router::new()
         .route("/", get(root_handler))
         .route("/overview", get(overview_handler))
         .route("/map", get(map_handler))
+        .route("/forecast", get(forecast_page_handler))
+        .route("/login", get(login_page_handler).post(login_handler))
+        .route("/logout", get(logout_handler))
         .route("/station/{id}/devices", get(devices_page_handler))
         .route("/api/status", get(api_status))
         .route("/api/summary", get(api_summary))
@@ -237,7 +281,14 @@ async fn main() {
         .route("/api/chart/alarms", get(chart_alarms))
         .route("/api/chart/values", get(chart_values))
         .route("/api/events", get(sse_handler))
+        .route("/api/forecast", get(api_forecast))
+        .route("/api/forecast/{id}", get(api_forecast_detail))
         .fallback(static_handler)
+        .route_layer(axum::middleware::from_fn(move |req, next| {
+            let state = auth_state.clone();
+            async move { auth_middleware(req, next, state).await }
+        }))
+        .layer(cors_layer)
         .with_state(state);
 
     cleanup_previous_instances();
@@ -255,7 +306,14 @@ async fn main() {
     tracing::info!("  气象站数据监控系统");
     tracing::info!("  Web 界面: http://localhost:{}", actual_port);
     tracing::info!("  刷新间隔: {} 秒", refresh_interval);
-    tracing::info!("  数据模式: {}", if is_simulation { "模拟数据" } else { "实时数据库" });
+    tracing::info!(
+        "  数据模式: {}",
+        if is_simulation {
+            "模拟数据"
+        } else {
+            "实时数据库"
+        }
+    );
     tracing::info!("============================================================");
 
     let server = axum::serve(listener, app);
@@ -287,6 +345,14 @@ async fn root_handler() -> Html<&'static str> {
     Html(include_str!("../templates/dashboard.html"))
 }
 
+async fn forecast_page_handler() -> Html<&'static str> {
+    Html(include_str!("../templates/forecast.html"))
+}
+
+async fn login_page_handler() -> Html<&'static str> {
+    Html(include_str!("../templates/login.html"))
+}
+
 async fn overview_handler() -> Html<&'static str> {
     Html(include_str!("../templates/overview.html"))
 }
@@ -295,30 +361,22 @@ async fn devices_page_handler() -> Html<&'static str> {
     Html(include_str!("../templates/devices.html"))
 }
 
-async fn api_status(
-    State(state): State<Arc<AppState>>,
-) -> Json<models::MonitorData> {
+async fn api_status(State(state): State<Arc<AppState>>) -> Json<models::MonitorData> {
     let data = state.data.read().await;
     Json(data.clone())
 }
 
-async fn api_summary(
-    State(state): State<Arc<AppState>>,
-) -> Json<models::MonitorSummary> {
+async fn api_summary(State(state): State<Arc<AppState>>) -> Json<models::MonitorSummary> {
     let data = state.data.read().await;
     Json(data.summary.clone())
 }
 
-async fn api_stations(
-    State(state): State<Arc<AppState>>,
-) -> Json<Vec<models::StationStatus>> {
+async fn api_stations(State(state): State<Arc<AppState>>) -> Json<Vec<models::StationStatus>> {
     let data = state.data.read().await;
     Json(data.stations.clone())
 }
 
-async fn api_config(
-    State(state): State<Arc<AppState>>,
-) -> Json<PublicConfig> {
+async fn api_config(State(state): State<Arc<AppState>>) -> Json<PublicConfig> {
     Json(PublicConfig {
         server: state.config.server.clone(),
         monitor: state.config.monitor.clone(),
@@ -326,9 +384,7 @@ async fn api_config(
     })
 }
 
-async fn api_regions(
-    State(state): State<Arc<AppState>>,
-) -> Json<Vec<models::RegionStats>> {
+async fn api_regions(State(state): State<Arc<AppState>>) -> Json<Vec<models::RegionStats>> {
     let data = state.data.read().await;
     let mut map: HashMap<String, models::RegionStats> = HashMap::new();
 
@@ -410,8 +466,14 @@ async fn api_station_detail(
     let mut categories: HashMap<String, models::CategoryStat> = HashMap::new();
     // Initialize all known categories so the drawer always shows them
     let cat_keys = [
-        "communication", "power", "temperature", "heating",
-        "ventilation", "pollution", "data_quality", "other",
+        "communication",
+        "power",
+        "temperature",
+        "heating",
+        "ventilation",
+        "pollution",
+        "data_quality",
+        "other",
     ];
     for key in cat_keys {
         categories.insert(
@@ -446,11 +508,25 @@ async fn api_station_detail(
 }
 
 fn categorize_alarm_text(alarm: &str) -> &'static str {
-    if alarm.starts_with("通讯") || alarm.contains("通信") || alarm.contains("网口") || alarm.contains("串口") || alarm.contains("无线") {
+    if alarm.starts_with("通讯")
+        || alarm.contains("通信")
+        || alarm.contains("网口")
+        || alarm.contains("串口")
+        || alarm.contains("无线")
+    {
         "communication"
-    } else if alarm.starts_with("供电") || alarm.starts_with("主板") || alarm.starts_with("蓄电池") || alarm.starts_with("工作电流") || alarm.starts_with("加热电源") {
+    } else if alarm.starts_with("供电")
+        || alarm.starts_with("主板")
+        || alarm.starts_with("蓄电池")
+        || alarm.starts_with("工作电流")
+        || alarm.starts_with("加热电源")
+    {
         "power"
-    } else if alarm.contains("温度") || alarm.contains("腔体") || alarm.contains("恒温") || alarm.contains("机箱") {
+    } else if alarm.contains("温度")
+        || alarm.contains("腔体")
+        || alarm.contains("恒温")
+        || alarm.contains("机箱")
+    {
         "temperature"
     } else if alarm.contains("加热") {
         "heating"
@@ -458,17 +534,16 @@ fn categorize_alarm_text(alarm: &str) -> &'static str {
         "ventilation"
     } else if alarm.contains("污染") || alarm.contains("镜头") || alarm.contains("窗口") {
         "pollution"
-    } else if alarm.contains("分钟") || alarm.contains("采样") || alarm.contains("变化率") || alarm.contains("超上限") || alarm.contains("超下限") {
+    } else if alarm.contains("分钟")
+        || alarm.contains("采样")
+        || alarm.contains("变化率")
+        || alarm.contains("超上限")
+        || alarm.contains("超下限")
+    {
         "data_quality"
     } else {
         "other"
     }
-}
-
-#[derive(Deserialize)]
-struct TopQuery {
-    #[serde(default = "default_top_limit")]
-    limit: usize,
 }
 
 fn default_top_limit() -> usize {
@@ -484,7 +559,11 @@ async fn api_top(
 
     // Lowest arrival rate
     let mut lowest: Vec<&models::StationStatus> = data.stations.iter().collect();
-    lowest.sort_by(|a, b| a.arrival_rate_24h.partial_cmp(&b.arrival_rate_24h).unwrap_or(std::cmp::Ordering::Equal));
+    lowest.sort_by(|a, b| {
+        a.arrival_rate_24h
+            .partial_cmp(&b.arrival_rate_24h)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Longest offline: use last_arrival_time gap in minutes; offline stations first
     let now = chrono::Local::now();
@@ -509,12 +588,14 @@ async fn api_top(
     let mut most_alarms: Vec<&models::StationStatus> = data.stations.iter().collect();
     most_alarms.sort_by(|a, b| b.alarm_count.cmp(&a.alarm_count));
 
-    let to_top = |s: &models::StationStatus, province: String, value: f64, label: String| models::TopStation {
-        id: s.id.clone(),
-        name: s.name.clone(),
-        province,
-        value,
-        label,
+    let to_top = |s: &models::StationStatus, province: String, value: f64, label: String| {
+        models::TopStation {
+            id: s.id.clone(),
+            name: s.name.clone(),
+            province,
+            value,
+            label,
+        }
     };
 
     let lowest_arrival_rate: Vec<models::TopStation> = lowest
@@ -526,7 +607,12 @@ async fn api_top(
                 .get(&s.id)
                 .map(|m| m.province.clone())
                 .unwrap_or_default();
-            to_top(s, province, s.arrival_rate_24h, format!("{:.1}%", s.arrival_rate_24h))
+            to_top(
+                s,
+                province,
+                s.arrival_rate_24h,
+                format!("{:.1}%", s.arrival_rate_24h),
+            )
         })
         .collect();
 
@@ -561,7 +647,12 @@ async fn api_top(
                 .get(&s.id)
                 .map(|m| m.province.clone())
                 .unwrap_or_default();
-            to_top(s, province, s.alarm_count as f64, format!("{} 个告警", s.alarm_count))
+            to_top(
+                s,
+                province,
+                s.alarm_count as f64,
+                format!("{} 个告警", s.alarm_count),
+            )
         })
         .collect();
 
@@ -622,7 +713,9 @@ async fn refresh_station_devices_cache(state: &Arc<AppState>) {
                 let changed = {
                     let cache = state.station_devices.read().await;
                     match cache.get(&id) {
-                        Some(prev) => serde_json::to_string(prev).ok() != serde_json::to_string(&fresh).ok(),
+                        Some(prev) => {
+                            serde_json::to_string(prev).ok() != serde_json::to_string(&fresh).ok()
+                        }
                         None => true,
                     }
                 };
@@ -672,15 +765,15 @@ async fn api_station_devices(
         });
 
     let fresh = state.db.get_station_devices(&id, &station_name).await;
-    
+
     let mut cache = state.station_devices.write().await;
     cache.insert(id.clone(), fresh.clone());
     drop(cache);
-    
+
     if let Ok(json) = serde_json::to_string(&fresh) {
         let _ = state.devices_tx.send(json);
     }
-    
+
     Json(fresh)
 }
 
@@ -688,17 +781,15 @@ async fn devices_sse_handler(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>> {
     let rx = state.devices_tx.subscribe();
-    let stream = BroadcastStream::new(rx).map(|result| {
-        match result {
-            Ok(msg) => Ok(Event::default().data(msg)),
-            Err(_) => Ok(Event::default().data("{}")),
-        }
+    let stream = BroadcastStream::new(rx).map(|result| match result {
+        Ok(msg) => Ok(Event::default().data(msg)),
+        Err(_) => Ok(Event::default().data("{}")),
     });
 
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(15))
-            .text("keep-alive")
+            .text("keep-alive"),
     )
 }
 
@@ -710,7 +801,8 @@ async fn chart_alarms(
     let stations = &state.config.stations;
     let trend = monitor::generate_alarm_trend(stations, hours);
 
-    let time_labels: Vec<String> = trend.iter()
+    let time_labels: Vec<String> = trend
+        .iter()
         .map(|(t, _)| t.format("%m-%d %H:00").to_string())
         .collect();
 
@@ -725,12 +817,13 @@ async fn chart_alarms(
         }
     }
 
-    let series: Vec<models::ChartSeries> = stations.iter().map(|st| {
-        models::ChartSeries {
+    let series: Vec<models::ChartSeries> = stations
+        .iter()
+        .map(|st| models::ChartSeries {
             name: format!("{} {}", st.name, st.id),
             data: series_map.get(&st.id).cloned().unwrap_or_default(),
-        }
-    }).collect();
+        })
+        .collect();
 
     Json(models::ChartAlarmResponse {
         time: time_labels,
@@ -748,13 +841,17 @@ async fn chart_values(
 
     let trend = monitor::generate_value_trend(&state.config.stations, station_id, item, hours);
 
-    let time_labels: Vec<String> = trend.iter()
+    let time_labels: Vec<String> = trend
+        .iter()
         .map(|(t, _)| t.format("%m-%d %H:%M").to_string())
         .collect();
     let values: Vec<f64> = trend.iter().map(|(_, v)| *v).collect();
 
     let (unit, item_name) = get_item_info(item);
-    let station_name = state.config.stations.iter()
+    let station_name = state
+        .config
+        .stations
+        .iter()
         .find(|s| s.id == station_id)
         .map(|s| format!("{} {}", s.name, s.id))
         .unwrap_or_else(|| station_id.to_string());
@@ -768,22 +865,167 @@ async fn chart_values(
     })
 }
 
+async fn api_forecast(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<ForecastQuery>,
+) -> Json<Vec<models::ForecastOverview>> {
+    let data = state.data.read().await;
+    let mut result = monitor::generate_forecast_overview(&data.stations);
+    if let Some(station_filter) = q.station.as_deref() {
+        result.retain(|item| item.station_id == station_filter);
+    }
+    Json(result)
+}
+
+async fn api_forecast_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Json<Option<models::ForecastDetail>> {
+    let data = state.data.read().await;
+    let status = match data.stations.iter().find(|s| s.id == id) {
+        Some(s) => s.clone(),
+        None => return Json(None),
+    };
+
+    let meta = state.station_meta.get(&id);
+    let result = monitor::generate_forecast_detail(&status, meta);
+    Json(Some(result))
+}
+
 async fn sse_handler(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>> {
     let rx = state.tx.subscribe();
-    let stream = BroadcastStream::new(rx).map(|result| {
-        match result {
-            Ok(msg) => Ok(Event::default().data(msg)),
-            Err(_) => Ok(Event::default().data("{}")),
-        }
+    let stream = BroadcastStream::new(rx).map(|result| match result {
+        Ok(msg) => Ok(Event::default().data(msg)),
+        Err(_) => Ok(Event::default().data("{}")),
     });
 
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(15))
-            .text("keep-alive")
+            .text("keep-alive"),
     )
+}
+
+async fn login_handler(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<LoginForm>,
+) -> Response {
+    if !state.config.auth.enabled {
+        return Redirect::to("/").into_response();
+    }
+
+    if form.username == state.config.auth.username && form.password == state.config.auth.password {
+        let token: String = thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(48)
+            .map(char::from)
+            .collect();
+        {
+            let mut tokens = state.session_tokens.write().await;
+            tokens.insert(token.clone());
+        }
+
+        let cookie_value = format!("session_token={}; HttpOnly; SameSite=Lax; Path=/", token);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::SET_COOKIE,
+            HeaderValue::from_str(&cookie_value).unwrap(),
+        );
+        headers.insert(header::LOCATION, HeaderValue::from_static("/"));
+        (StatusCode::FOUND, headers, "").into_response()
+    } else {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::LOCATION, HeaderValue::from_static("/login"));
+        (StatusCode::FOUND, headers, "").into_response()
+    }
+}
+
+async fn logout_handler(State(state): State<Arc<AppState>>, req: Request<Body>) -> Response {
+    if let Some(cookie_header) = req.headers().get(header::COOKIE) {
+        if let Ok(cookie_str) = cookie_header.to_str() {
+            for part in cookie_str.split(';') {
+                let pair = part.trim();
+                if let Some((name, value)) = pair.split_once('=') {
+                    if name == "session_token" {
+                        let mut tokens = state.session_tokens.write().await;
+                        tokens.remove(value);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        HeaderValue::from_static(
+            "session_token=deleted; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
+        ),
+    );
+    headers.insert(header::LOCATION, HeaderValue::from_static("/login"));
+    (StatusCode::FOUND, headers, "").into_response()
+}
+
+async fn authenticate_request(cookie_header: Option<String>, state: &AppState) -> bool {
+    if !state.config.auth.enabled {
+        return true;
+    }
+
+    if let Some(cookie_str) = cookie_header {
+        for part in cookie_str.split(';') {
+            let pair = part.trim();
+            if let Some((name, value)) = pair.split_once('=') {
+                if name == "session_token" {
+                    let tokens = state.session_tokens.read().await;
+                    if tokens.contains(value) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+async fn auth_middleware(req: Request<Body>, next: Next, state: Arc<AppState>) -> Response {
+    let path = req.uri().path();
+    if path == "/login" || path == "/logout" || req.method() == Method::OPTIONS {
+        return next.run(req).await;
+    }
+
+    let cookie_header = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|h| h.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    if authenticate_request(cookie_header, &state).await {
+        next.run(req).await
+    } else {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::LOCATION, HeaderValue::from_static("/login"));
+        (StatusCode::FOUND, headers, "").into_response()
+    }
+}
+
+fn build_cors_layer(origins: &[String]) -> CorsLayer {
+    if origins.is_empty() {
+        CorsLayer::new()
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .allow_origin(Any)
+    } else {
+        let origin_values: Vec<HeaderValue> = origins
+            .iter()
+            .filter_map(|origin| HeaderValue::from_str(origin).ok())
+            .collect();
+        CorsLayer::new()
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers([header::CONTENT_TYPE, header::COOKIE])
+            .allow_origin(AllowOrigin::list(origin_values))
+    }
 }
 
 fn get_item_info(item: &str) -> (String, String) {
@@ -811,4 +1053,3 @@ fn get_item_info(item: &str) -> (String, String) {
 async fn static_handler() -> Response {
     (StatusCode::NOT_FOUND, "Not Found").into_response()
 }
-

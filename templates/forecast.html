@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 预报 - 设备运行状态</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg: #eef3fb;
+      --card: #fff;
+      --primary: #206bc4;
+      --primary-soft: #e8f1ff;
+      --text: #1f2d3d;
+      --muted: #718096;
+      --warn: #f39c12;
+      --danger: #e12d39;
+      --success: #2d9c6f;
+      --radius: 18px;
+      --shadow: 0 20px 45px rgba(56,81,123,0.08);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text); }
+    .header { background: linear-gradient(135deg, #1f5fa8, #296ed8); padding: 22px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; color: #fff; }
+    .header h1 { margin: 0; font-size: 24px; }
+    .header .subtitle { color: rgba(255,255,255,0.8); font-size: 13px; margin-top: 6px; }
+    .header .nav { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .header .nav a { color: rgba(255,255,255,0.9); text-decoration: none; padding: 8px 14px; border-radius: 12px; background: rgba(255,255,255,0.12); transition: background 0.2s ease; }
+    .header .nav a.active, .header .nav a:hover { background: rgba(255,255,255,0.22); }
+    .container { max-width: 1360px; margin: 0 auto; padding: 24px; }
+    .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 22px; }
+    .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid rgba(32,107,196,0.08); padding: 22px; }
+    .card-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+    .card-value { font-size: 32px; font-weight: 700; margin-top: 8px; }
+    .card-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .chart-box { width: 100%; height: 320px; }
+    .search-bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+    .search-bar input, .search-bar select { flex: 1; min-width: 220px; border: 1px solid #d8e2f2; border-radius: 14px; background: #fff; padding: 12px 16px; font-size: 14px; color: var(--text); }
+    .search-bar button { border: none; background: var(--primary); color: #fff; border-radius: 14px; padding: 12px 18px; cursor: pointer; font-weight: 600; }
+    .forecast-list { display: grid; gap: 18px; }
+    .forecast-card { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 22px; border-radius: 20px; background: var(--card); border: 1px solid rgba(17,44,83,0.08); box-shadow: 0 12px 30px rgba(27,50,88,0.06); }
+    .forecast-card .meta { display: grid; gap: 8px; }
+    .forecast-card .station { font-size: 18px; font-weight: 700; }
+    .forecast-card .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .badge.high { background: rgba(225,45,57,0.12); color: var(--danger); }
+    .badge.medium { background: rgba(243,156,18,0.12); color: var(--warn); }
+    .badge.low { background: rgba(45,156,111,0.12); color: var(--success); }
+    .forecast-card .summary { font-size: 14px; color: var(--muted); line-height: 1.7; }
+    .forecast-card .advice { margin-top: 12px; display: grid; gap: 8px; }
+    .forecast-card .advice span { display: inline-flex; align-items: center; gap: 8px; color: var(--text); background: #f6faff; border-radius: 12px; padding: 10px 14px; font-size: 13px; }
+    .forecast-card button { border: none; background: var(--primary); color: #fff; border-radius: 14px; padding: 12px 18px; font-weight: 700; cursor: pointer; }
+    .forecast-footer { margin-top: 24px; font-size: 13px; color: var(--muted); }
+    .detail-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); opacity: 0; visibility: hidden; transition: opacity 0.2s ease; z-index: 90; }
+    .detail-overlay.open { opacity: 1; visibility: visible; }
+    .detail-panel { position: fixed; top: 0; right: 0; width: min(520px, 100%); height: 100vh; background: #fff; box-shadow: -18px 0 60px rgba(17, 24, 39, 0.18); transform: translateX(100%); transition: transform 0.25s ease; z-index: 100; display: flex; flex-direction: column; }
+    .detail-panel.open { transform: translateX(0); }
+    .detail-panel-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 24px 22px 18px; border-bottom: 1px solid rgba(226, 232, 240, 0.8); gap: 16px; }
+    .detail-panel-title { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1.2; }
+    .detail-panel-subtitle { font-size: 13px; color: var(--muted); margin-top: 8px; }
+    .detail-close { border: none; background: rgba(17, 27, 81, 0.08); color: var(--text); width: 36px; height: 36px; border-radius: 12px; font-size: 20px; cursor: pointer; }
+    .detail-body { padding: 0 22px 22px; overflow-y: auto; flex: 1; }
+    .detail-section { margin-bottom: 22px; }
+    .detail-section-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 12px; }
+    .detail-grid { display: grid; gap: 12px; }
+    .detail-item { background: #f7f9fe; border-radius: 16px; padding: 14px 16px; }
+    .detail-item .item-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; display: block; }
+    .detail-item .item-value { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.5; }
+    .detail-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+    .detail-list li { background: #f8fafd; border-left: 3px solid var(--primary); padding: 12px 14px; border-radius: 14px; color: var(--text); font-size: 13px; line-height: 1.6; }
+    .detail-badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #eef6ff; color: var(--primary); font-size: 12px; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>设备运行状态 AI 预报</h1>
+      <div class="subtitle">从气象行业和运维视角生成智能风险判断、优先巡检建议与关键告警触发点。</div>
+    </div>
+    <div class="nav">
+      <a href="/">站点状态</a>
+      <a href="/overview">综合看板</a>
+      <a href="/map">地图监控</a>
+      <a href="/forecast" class="active">AI预报</a>
+    </div>
+  </div>
+  <div class="container">
+    <div class="overview-grid">
+      <div class="card">
+        <div class="card-title">风险等级分布</div>
+        <div class="card-value" id="risk-summary">正在加载...</div>
+        <div class="card-note">系统根据告警、在线率和数据到达率综合评估风险。</div>
+      </div>
+      <div class="card">
+        <div class="card-title">高风险站点</div>
+        <div class="card-value" id="high-risk-count">0</div>
+        <div class="card-note">优先关注高风险站点，避免运行中断。</div>
+      </div>
+      <div class="card">
+        <div class="card-title">中风险站点</div>
+        <div class="card-value" id="medium-risk-count">0</div>
+        <div class="card-note">中风险站点可能存在数据上报或告警趋势。</div>
+      </div>
+      <div class="card">
+        <div class="card-title">低风险站点</div>
+        <div class="card-value" id="low-risk-count">0</div>
+        <div class="card-note">运行稳定，可按常规巡检计划安排。</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">风险等级趋势</div>
+      <div id="risk-chart" class="chart-box"></div>
+    </div>
+    <div class="search-bar">
+      <input id="filter-input" type="text" placeholder="输入站点名称或ID进行筛选" />
+      <select id="risk-filter">
+        <option value="all">全部风险等级</option>
+        <option value="高">高风险</option>
+        <option value="中">中风险</option>
+        <option value="低">低风险</option>
+      </select>
+      <button id="refresh-button">刷新预报</button>
+    </div>
+    <div class="forecast-list" id="forecast-list"></div>
+    <div id="detailOverlay" class="detail-overlay"></div>
+    <div id="detailPanel" class="detail-panel" aria-hidden="true">
+      <div class="detail-panel-header">
+        <div>
+          <div class="detail-panel-title" id="detailTitle">站点预测详情</div>
+          <div class="detail-panel-subtitle" id="detailSubtitle">通过风险因子、关键触发和运维建议帮助快速决策。</div>
+        </div>
+        <button id="detailClose" class="detail-close" aria-label="关闭详情">×</button>
+      </div>
+      <div class="detail-body" id="detailBody">
+        <div class="detail-section">
+          <div class="detail-section-title">请选择一个站点查看详细预报</div>
+        </div>
+      </div>
+    </div>
+    <div class="forecast-footer">AI 预报结果基于当前站点告警、在线状态和数据到达率综合计算，为运维人员提供优先排查建议。</div>
+  </div>
+  <script>
+    const chart = echarts.init(document.getElementById('risk-chart'));
+    const state = { items: [] };
+
+    async function loadForecast() {
+      const response = await fetch('/api/forecast');
+      state.items = await response.json();
+      renderOverview();
+      renderList();
+    }
+
+    function renderOverview() {
+      const high = state.items.filter(i => i.risk_level === '高');
+      const medium = state.items.filter(i => i.risk_level === '中');
+      const low = state.items.filter(i => i.risk_level === '低');
+      document.getElementById('high-risk-count').textContent = high.length;
+      document.getElementById('medium-risk-count').textContent = medium.length;
+      document.getElementById('low-risk-count').textContent = low.length;
+      document.getElementById('risk-summary').textContent = `${high.length} 个高风险、${medium.length} 个中风险、${low.length} 个低风险`;
+
+      const option = {
+        tooltip: { trigger: 'item' },
+        legend: { top: '8%', left: 'center' },
+        series: [
+          {
+            name: '风险等级',
+            type: 'pie',
+            radius: ['40%', '65%'],
+            avoidLabelOverlap: false,
+            label: { show: true, position: 'outside', formatter: '{b}: {c}' },
+            emphasis: { label: { show: true, fontSize: 16, fontWeight: 'bold' } },
+            data: [
+              { value: high.length, name: '高' },
+              { value: medium.length, name: '中' },
+              { value: low.length, name: '低' },
+            ],
+            color: ['#e12d39', '#f39c12', '#2d9c6f'],
+          },
+        ],
+      };
+      chart.setOption(option);
+    }
+
+    function formatAdvice(advice) {
+      return advice.length > 0 ? advice.map(text => `<span>⚡ ${text}</span>`).join('') : '';
+    }
+
+    function formatList(items) {
+      return items.length > 0
+        ? `<ul class="detail-list">${items.map(text => `<li>${text}</li>`).join('')}</ul>`
+        : '<div class="detail-item"><span class="item-value">暂无可显示条目。</span></div>';
+    }
+
+    function renderList() {
+      const filterText = document.getElementById('filter-input').value.trim().toLowerCase();
+      const level = document.getElementById('risk-filter').value;
+      const list = state.items.filter(item => {
+        const matchesText = filterText === '' || item.station_name.toLowerCase().includes(filterText) || item.station_id.includes(filterText);
+        const matchesLevel = level === 'all' || item.risk_level === level;
+        return matchesText && matchesLevel;
+      });
+
+      const container = document.getElementById('forecast-list');
+      container.innerHTML = list.map(item => `
+        <div class="forecast-card">
+          <div class="meta">
+            <div class="station">${item.station_name}</div>
+            <div class="badge ${item.risk_level === '高' ? 'high' : (item.risk_level === '中' ? 'medium' : 'low')}">风险 ${item.risk_level}</div>
+            <div class="summary">${item.summary}</div>
+            <div class="advice">${formatAdvice([item.advice])}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;gap:16px;min-width:180px;">
+            <div style="text-align:right;">
+              <div style="font-size:14px;color:#718096;">信心等级</div>
+              <div style="font-size:24px;font-weight:700;">${item.risk_score}%</div>
+            </div>
+            <button onclick="showDetail('${item.station_id}')">查看详情</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function openDetailPanel() {
+      document.getElementById('detailOverlay').classList.add('open');
+      const panel = document.getElementById('detailPanel');
+      panel.classList.add('open');
+      panel.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeDetailPanel() {
+      document.getElementById('detailOverlay').classList.remove('open');
+      const panel = document.getElementById('detailPanel');
+      panel.classList.remove('open');
+      panel.setAttribute('aria-hidden', 'true');
+    }
+
+    function renderDetail(detail) {
+      const title = document.getElementById('detailTitle');
+      const subtitle = document.getElementById('detailSubtitle');
+      const body = document.getElementById('detailBody');
+
+      title.textContent = `${detail.station_name}`;
+      subtitle.textContent = `风险等级 ${detail.risk_level} · 信心 ${detail.confidence} · 更新时间 ${detail.generated_at}`;
+      body.innerHTML = `
+        <div class="detail-section">
+          <div class="detail-section-title">风险聚焦</div>
+          <div class="detail-grid">
+            <div class="detail-item">
+              <span class="item-label">本次预报摘要</span>
+              <span class="item-value">${detail.summary}</span>
+            </div>
+            <div class="detail-item">
+              <span class="item-label">重点提示</span>
+              <span class="item-value">${detail.highlight}</span>
+            </div>
+            <div class="detail-item full">
+              <span class="item-label">预测状态</span>
+              <span class="item-value">${detail.predicted_state}</span>
+            </div>
+          </div>
+        </div>
+        <div class="detail-section">
+          <div class="detail-section-title">风险因子</div>
+          ${detail.risk_factors.length > 0 ? `<ul class="detail-list">${detail.risk_factors.map(f => `<li>${f}</li>`).join('')}</ul>` : '<div class="detail-item"><span class="item-value">暂无风险因子。</span></div>'}
+        </div>
+        <div class="detail-section">
+          <div class="detail-section-title">关键触发点</div>
+          ${formatList(detail.key_triggers)}
+        </div>
+        <div class="detail-section">
+          <div class="detail-section-title">运维建议</div>
+          ${formatList(detail.maintenance_advice)}
+        </div>
+      `;
+    }
+
+    async function showDetail(id) {
+      const response = await fetch(`/api/forecast/${id}`);
+      const detail = await response.json();
+      if (!detail) {
+        alert('未找到该站点预报数据');
+        return;
+      }
+      renderDetail(detail);
+      openDetailPanel();
+    }
+
+    document.getElementById('refresh-button').addEventListener('click', async () => {
+      await loadForecast();
+    });
+    document.getElementById('filter-input').addEventListener('input', renderList);
+    document.getElementById('risk-filter').addEventListener('change', renderList);
+    document.getElementById('detailClose').addEventListener('click', closeDetailPanel);
+    document.getElementById('detailOverlay').addEventListener('click', closeDetailPanel);
+    loadForecast();
+  </script>
+</body>
+</html>

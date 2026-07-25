@@ -9,6 +9,7 @@
 - **交互式图表**: ECharts 折线图，支持缩放、悬停提示、图例切换、阈值标线
 - **实时推送**: SSE 服务器推送，数据更新即时同步到浏览器
 - **可配置化**: 通过 `config.toml` 配置端口、数据库、站台列表、监控间隔等
+- **AI 预报**: 提供设备运行状态预测、风险等级和运维优先级建议
 - **跨平台**: 支持 Windows / Ubuntu / macOS
 
 ## 系统要求
@@ -36,6 +37,7 @@ cargo build --release
 ```
 
 编译完成后，二进制文件位于：
+
 - **Windows**: `target/release/weather-monitor.exe`
 - **Linux/macOS**: `target/release/weather-monitor`
 
@@ -67,10 +69,10 @@ vendor = "华云"
 
 ### 模式说明
 
-| 模式 | 配置项 | 说明 |
-|------|--------|------|
-| 模拟模式 | `simulation_mode = true` | 无需数据库，生成随机模拟数据 |
-| 真实模式 | `simulation_mode = false` | 连接 MySQL 查询 `data_st` 表 |
+| 模式     | 配置项                      | 说明                          |
+| -------- | --------------------------- | ----------------------------- |
+| 模拟模式 | `simulation_mode = true`  | 无需数据库，生成随机模拟数据  |
+| 真实模式 | `simulation_mode = false` | 连接 MySQL 查询`data_st` 表 |
 
 ## 使用方法
 
@@ -117,26 +119,28 @@ cargo run --release
 http://localhost:8080          # 站点状态列表
 http://localhost:8080/overview # 综合看板
 http://localhost:8080/map      # 地图监控（新增）
+http://localhost:8080/forecast # AI 预报页面
 ```
 
 ### 界面功能
 
 1. **报警趋势图**: 顶部区域，展示各站历史报警次数折线
+
    - 支持时间范围切换（1h/6h/24h/3d/7d）
    - 鼠标滚轮缩放、拖拽平移
    - 点击图例切换站点显示
-
 2. **站台卡片**: 中部区域，展示 32+ 站实时状态
+
    - 搜索框：按站号/站名/厂商筛选
    - 状态筛选：全部/在线/离线/报警
    - 点击卡片可跳转到数值曲线图
-
 3. **设备数值曲线**: 底部区域，展示具体监测项的时间序列
+
    - 选择站点 + 监测项（温度/电压/电流等）
    - 阈值标线自动标注上下限
    - 面积图 + 平滑曲线
-
 4. **🗺️ 地图监控**（新增）: `/map` 页面
+
    - OpenLayers + 天地图/高德瓦片底图
    - 站点位置标记（在线=绿色/报警=红色/离线=灰色）
    - 左侧面板：省份筛选、搜索、站点列表
@@ -145,24 +149,26 @@ http://localhost:8080/map      # 地图监控（新增）
 
 ## API 接口
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `GET /` | - | 监控仪表盘 HTML（站点列表） |
-| `GET /overview` | - | 综合看板 HTML |
-| `GET /map` | - | 🗺️ 地图监控 HTML |
-| `GET /api/status` | - | 全量监控状态 JSON |
-| `GET /api/summary` | - | 汇总统计 JSON |
-| `GET /api/stations` | - | 站台列表 JSON |
-| `GET /api/config` | - | 当前配置 JSON |
-| `GET /api/regions` | - | 省级统计 JSON |
-| `GET /api/station/{id}` | - | 站点详情 JSON |
-| `GET /api/top` | - | Top 重点关注站点 JSON |
-| `GET /api/map/stations` | - | 🗺️ 地图站点数据（含经纬度） |
-| `GET /api/station/{id}/devices` | - | 站内设备状态 JSON |
-| `GET /api/devices/events` | - | 设备状态 SSE 推送 |
-| `GET /api/chart/alarms?hours=24` | - | 报警趋势图数据 |
-| `GET /api/chart/values?station=50936&item=wA&hours=6` | - | 设备数值曲线数据 |
-| `GET /api/events` | - | SSE 实时推送流 |
+| 端点                                                    | 方法 | 说明                          |
+| ------------------------------------------------------- | ---- | ----------------------------- |
+| `GET /`                                               | -    | 监控仪表盘 HTML（站点列表）   |
+| `GET /overview`                                       | -    | 综合看板 HTML                 |
+| `GET /map`                                            | -    | 🗺️ 地图监控 HTML            |
+| `GET /api/status`                                     | -    | 全量监控状态 JSON             |
+| `GET /api/summary`                                    | -    | 汇总统计 JSON                 |
+| `GET /api/stations`                                   | -    | 站台列表 JSON                 |
+| `GET /api/config`                                     | -    | 当前配置 JSON                 |
+| `GET /api/regions`                                    | -    | 省级统计 JSON                 |
+| `GET /api/station/{id}`                               | -    | 站点详情 JSON                 |
+| `GET /api/top`                                        | -    | Top 重点关注站点 JSON         |
+| `GET /api/map/stations`                               | -    | 🗺️ 地图站点数据（含经纬度） |
+| `GET /api/station/{id}/devices`                       | -    | 站内设备状态 JSON             |
+| `GET /api/devices/events`                             | -    | 设备状态 SSE 推送             |
+| `GET /api/chart/alarms?hours=24`                      | -    | 报警趋势图数据                |
+| `GET /api/chart/values?station=50936&item=wA&hours=6` | -    | 设备数值曲线数据              |
+| `GET /api/events`                                     | -    | SSE 实时推送流                |
+| `GET /api/forecast`                                   | -    | 设备运行状态 AI 预报列表      |
+| `GET /api/forecast/{id}`                              | -    | 单站点 AI 预报详情            |
 
 ### API 示例
 
@@ -176,6 +182,10 @@ curl "http://localhost:8080/api/chart/alarms?hours=24"
 # 获取站点 50936 的温度(wA) 6 小时曲线
 curl "http://localhost:8080/api/chart/values?station=50936&item=wA&hours=6"
 ```
+
+## 改版履历
+
+- 2026-07-25: 新增"AI 运行状态预报"功能页面，优化预测详情侧边面板交互，补充 `GET /api/forecast` 和 `GET /api/forecast/{id}` 接口；在仪表盘和综合看板中添加 AI 预报入口卡片，提高功能可见性。
 
 ## 项目结构
 
@@ -197,19 +207,21 @@ weather-monitor/
     ├── dashboard.html      # ECharts 交互仪表盘（站点列表视图）
     ├── overview.html       # 综合看板（省级监管 + Top5）
     ├── map.html            # 🗺️ 地图监控（OpenLayers + 天地图/高德）
+    ├── forecast.html       # AI 预报页面（风险等级、运维建议）
+    ├── login.html          # 登录页面（可选认证）
     └── devices.html        # 站内设备状态详情
 ```
 
 ## 业务逻辑移植对照
 
-| tm.c 函数 | Rust 实现 | 文件 |
-|-----------|-----------|------|
-| `mSTA[]` 30+站 | `config.toml` + `StationConfig` | `config.rs` |
-| `getALM(I, V)` | `get_alarm(item, value)` | `monitor.rs` |
-| `isKIT(m)` | `is_kit(item)` | `monitor.rs` |
-| `parse_st_packet()` | `parse_st_packet(data)` | `monitor.rs` |
-| `sqlProST()` | `DbService::query_monitor_data()` | `db.rs` |
-| `getSid()` | `stations.iter().find()` | `db.rs` |
+| tm.c 函数             | Rust 实现                           | 文件           |
+| --------------------- | ----------------------------------- | -------------- |
+| `mSTA[]` 30+站      | `config.toml` + `StationConfig` | `config.rs`  |
+| `getALM(I, V)`      | `get_alarm(item, value)`          | `monitor.rs` |
+| `isKIT(m)`          | `is_kit(item)`                    | `monitor.rs` |
+| `parse_st_packet()` | `parse_st_packet(data)`           | `monitor.rs` |
+| `sqlProST()`        | `DbService::query_monitor_data()` | `db.rs`      |
+| `getSid()`          | `stations.iter().find()`          | `db.rs`      |
 
 ## 跨平台编译
 
@@ -245,12 +257,15 @@ cargo build --release --target x86_64-unknown-linux-gnu
 ## 常见问题
 
 ### Q: 端口 114514 无法使用？
+
 A: TCP 端口最大值为 65535。若配置中写 114514，程序会自动降级到 8080 并打印警告。请修改 `config.toml` 中的 `port` 为有效值。
 
 ### Q: MySQL 连接失败怎么办？
+
 A: 程序会自动降级到模拟模式。检查 `config.toml` 中的数据库配置，或设置 `simulation_mode = true` 使用模拟数据。
 
 ### Q: 如何添加新的监控站点？
+
 A: 在 `config.toml` 中添加新的 `[[stations]]` 段落即可：
 
 ```toml

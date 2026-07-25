@@ -1,5 +1,5 @@
 use crate::config::StationConfig;
-use crate::models::{CheckItem, StationStatus, MonitorSummary, MonitorData};
+use crate::models::{CheckItem, ForecastDetail, ForecastOverview, MonitorData, MonitorSummary, StationMeta, StationStatus};
 use chrono::{Local, Duration, DateTime};
 use rand::Rng;
 use std::collections::HashMap;
@@ -565,4 +565,194 @@ pub fn generate_value_trend(_stations: &[StationConfig], _station_id: &str, item
         t = t + Duration::minutes(10);
     }
     data
+}
+
+pub fn generate_forecast_overview(stations: &[StationStatus]) -> Vec<ForecastOverview> {
+    stations
+        .iter()
+        .map(|status| {
+            let score = calculate_risk_score(status);
+            let level = risk_level(score);
+            ForecastOverview {
+                station_id: status.id.clone(),
+                station_name: status.name.clone(),
+                risk_level: level.to_string(),
+                risk_score: (score * 100.0).round() / 10.0,
+                summary: forecast_summary(status, level),
+                highlight: forecast_highlight(status, level),
+                advice: forecast_advice(status, level),
+                updated_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            }
+        })
+        .collect()
+}
+
+pub fn generate_forecast_detail(
+    status: &StationStatus,
+    meta: Option<&StationMeta>,
+) -> ForecastDetail {
+    let score = calculate_risk_score(status);
+    let level = risk_level(score);
+    let mut triggers = Vec::new();
+    let mut advice = Vec::new();
+
+    if !status.online {
+        triggers.push("站点离线，未收到最近数据".to_string());
+        triggers.push("通信链路或电源可能异常".to_string());
+        advice.push("优先排查供电与网络链路，确认设备是否恢复在线".to_string());
+        advice.push("检查机箱门、蓄电池电压、智能电源状态".to_string());
+    } else {
+        if status.alarm_count > 0 {
+            triggers.push(format!("当前存在 {} 条异常告警", status.alarm_count));
+        }
+        if status.arrival_rate_24h < 90.0 {
+            triggers.push("24小时到达率低于 90%".to_string());
+        }
+        if status.last_arrival_time.is_empty() {
+            triggers.push("最近到达时间记录缺失".to_string());
+        }
+        if status.alarm_count == 0 && status.arrival_rate_24h >= 90.0 {
+            triggers.push("当前运行态势平稳，无明显异常".to_string());
+        }
+        if status.arrival_rate_24h < 95.0 {
+            advice.push("检查数据上报链路和采集模块的稳定性".to_string());
+        }
+        if status.alarm_count > 1 {
+            advice.push("根据告警类型重点巡检通信、供电和温度模块".to_string());
+        }
+        if status.alarm_count == 0 {
+            advice.push("保持当前巡检频次，持续观察告警趋势".to_string());
+        }
+    }
+
+    if advice.is_empty() {
+        advice.push("建议保持日常巡检并关注后续告警变化".to_string());
+    }
+
+    let predicted_state = if !status.online {
+        "离线风险: 设备可能需要现场检查".to_string()
+    } else if status.alarm_count >= 3 {
+        "警戒风险: 当前运行状态存在多点异常".to_string()
+    } else if status.arrival_rate_24h < 85.0 {
+        "关注风险: 数据上报稳定性较差".to_string()
+    } else {
+        "运行稳定: 继续保持常规巡检".to_string()
+    };
+
+    let confidence = if score >= 0.7 {
+        "高".to_string()
+    } else if score >= 0.35 {
+        "中".to_string()
+    } else {
+        "低".to_string()
+    };
+
+    let station_name = match meta {
+        Some(m) => format!("{} ({})", status.name, m.station_id),
+        None => status.name.clone(),
+    };
+
+    let mut risk_factors = Vec::new();
+    if status.online {
+        risk_factors.push("当前在线: 设备正在上报数据".to_string());
+    } else {
+        risk_factors.push("当前离线: 需优先排查通信和供电".to_string());
+    }
+    if status.alarm_count > 0 {
+        risk_factors.push(format!("告警数量: {} 条", status.alarm_count));
+    } else {
+        risk_factors.push("暂无活动告警".to_string());
+    }
+    risk_factors.push(format!("24h 到达率: {:.1}%", status.arrival_rate_24h));
+    if !status.last_arrival_time.is_empty() {
+        risk_factors.push(format!("最近到达时间: {}", status.last_arrival_time));
+    } else {
+        risk_factors.push("最近到达时间未知".to_string());
+    }
+    if status.arrival_rate_24h < 90.0 {
+        risk_factors.push("数据到达率下降，可能存在通信/采集异常".to_string());
+    }
+    if status.alarm_count >= 3 {
+        risk_factors.push("多点告警触发，高风险巡检优先级".to_string());
+    }
+
+    ForecastDetail {
+        station_id: status.id.clone(),
+        station_name,
+        risk_level: level.to_string(),
+        risk_score: (score * 100.0).round() / 10.0,
+        summary: forecast_summary(status, level),
+        highlight: forecast_highlight(status, level),
+        predicted_state,
+        risk_factors,
+        key_triggers: triggers,
+        maintenance_advice: advice,
+        confidence,
+        generated_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    }
+}
+
+fn calculate_risk_score(status: &StationStatus) -> f64 {
+    let mut score = if status.online { 0.1 } else { 0.7 };
+    score += (status.alarm_count as f64) * 0.12;
+    if status.arrival_rate_24h < 95.0 {
+        score += (95.0 - status.arrival_rate_24h) * 0.015;
+    }
+    if !status.last_arrival_time.is_empty() {
+        if let Ok(last) =
+            chrono::NaiveDateTime::parse_from_str(&status.last_arrival_time, "%Y-%m-%d %H:%M:%S")
+        {
+            let diff = (Local::now().naive_local() - last).num_minutes();
+            if diff > 120 {
+                score += 0.15;
+            }
+        }
+    }
+    score.clamp(0.0, 1.0)
+}
+
+fn risk_level(score: f64) -> &'static str {
+    if score >= 0.65 {
+        "高"
+    } else if score >= 0.35 {
+        "中"
+    } else {
+        "低"
+    }
+}
+
+fn forecast_summary(status: &StationStatus, level: &str) -> String {
+    if !status.online {
+        "设备离线，可能存在通信或供电异常".to_string()
+    } else if level == "高" {
+        "当前告警集中且数据到达率下降，建议优先现场检查".to_string()
+    } else if level == "中" {
+        "运行态势需关注，重点检查告警模块与网络稳定性".to_string()
+    } else {
+        "运行稳定，继续保持常规巡检和数据观察".to_string()
+    }
+}
+
+fn forecast_highlight(status: &StationStatus, level: &str) -> String {
+    if !status.online {
+        "离线风险".to_string()
+    } else if level == "高" {
+        "多点异常告警".to_string()
+    } else if status.arrival_rate_24h < 90.0 {
+        "到达率下降".to_string()
+    } else {
+        "运行稳定".to_string()
+    }
+}
+
+fn forecast_advice(status: &StationStatus, level: &str) -> String {
+    if !status.online {
+        "优先排查供电与通信链路，及时恢复在线".to_string()
+    } else if level == "高" {
+        "现场巡检机箱温度、蓄电池电压及通信网口".to_string()
+    } else if level == "中" {
+        "关注告警趋势，检查传感器与网络稳定性".to_string()
+    } else {
+        "保持当前巡检频次，持续观察数据变化".to_string()
+    }
 }
