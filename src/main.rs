@@ -227,8 +227,9 @@ async fn main() {
                 .unwrap_or(24);
 
             tokio::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(tokio::time::Duration::from_secs(reminder_interval * 3600));
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+                    reminder_interval * 3600,
+                ));
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 interval.tick().await; // skip first immediate tick
 
@@ -238,8 +239,12 @@ async fn main() {
                         tracing::warn!(
                             "╔════════════════════════════════════════════════════════════╗"
                         );
-                        tracing::warn!("║  ⏰ LICENSE REMINDER: Your license has EXPIRED.           ║");
-                        tracing::warn!("║  Please contact support to renew.                        ║");
+                        tracing::warn!(
+                            "║  ⏰ LICENSE REMINDER: Your license has EXPIRED.           ║"
+                        );
+                        tracing::warn!(
+                            "║  Please contact support to renew.                        ║"
+                        );
                         tracing::warn!(
                             "╚════════════════════════════════════════════════════════════╝"
                         );
@@ -247,7 +252,9 @@ async fn main() {
                         tracing::warn!(
                             "╔════════════════════════════════════════════════════════════╗"
                         );
-                        tracing::warn!("║  ⏰ LICENSE REMINDER: No valid license file found.        ║");
+                        tracing::warn!(
+                            "║  ⏰ LICENSE REMINDER: No valid license file found.        ║"
+                        );
                         tracing::warn!(
                             "╚════════════════════════════════════════════════════════════╝"
                         );
