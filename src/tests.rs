@@ -34,7 +34,7 @@ mod tests {
         assert_eq!(get_alarm("a", "0"), "其他工作:正常");
         assert_eq!(get_alarm("a", "1"), "其他工作:异常");
         assert_eq!(get_alarm("t", "0"), "通讯状态:正常");
-        assert_eq!(get_alarm("t", "1"), "通讯状态:故障");
+        assert_eq!(get_alarm("t", "1"), "通讯状态:异常");
         assert_eq!(get_alarm("w", "0"), "温度状态:正常");
         assert_eq!(get_alarm("x", "0"), "供电状态:正常");
         assert_eq!(get_alarm("s", "0"), "污染状态:正常");

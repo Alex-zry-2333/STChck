@@ -142,6 +142,82 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         return format!("{}:{}", prefix, suffix);
     }
 
+    // Two-char kit items (tA-G except D, sA-H, qA-E, wA-B, xA-C)
+    if item.len() == 2 {
+        let bytes = item.as_bytes();
+        if bytes[0] == b't' && bytes[1] >= b'A' && bytes[1] <= b'G' && bytes[1] != b'D' {
+            let p = match bytes[1] {
+                b'A' => "设备到智能集成处理器通信状态",
+                b'B' => "总线状态",
+                b'C' => "串口通信状态",
+                b'E' => "鱼眼相机网口通信状态",
+                b'F' => "普通相机1网口通信状态",
+                b'G' => "普通相机2网口通信状态",
+                _ => item,
+            };
+            let s = match value.chars().next() {
+                Some('0') => "正常",
+                Some('1') => "故障",
+                Some('2') => "未启用",
+                _ => value,
+            };
+            return format!("{}:{}", p, s);
+        }
+        if bytes[0] == b's' && bytes[1] >= b'A' && bytes[1] <= b'H' {
+            let p = match bytes[1] {
+                b'A' => "窗口",
+                b'B' => "探测器",
+                b'C' => "镜头",
+                b'D' => "鱼眼镜头",
+                b'E' => "摄像头1",
+                b'F' => "摄像头2",
+                b'G' => "降水现象仪1窗口",
+                b'H' => "降水现象仪2窗口",
+                _ => item,
+            };
+            let s = match value.chars().next() {
+                Some('0') => "正常",
+                Some('1') => "一般污染",
+                Some('2') => "严重污染",
+                _ => value,
+            };
+            return format!("{}:{}", p, s);
+        }
+        if bytes[0] == b'q' && bytes[1] >= b'A' && bytes[1] <= b'E' {
+            let p = match bytes[1] {
+                b'A' => "当前设备输出分钟数据值不超上限",
+                b'B' => "当前设备输出分钟数据值不超下限",
+                b'C' => "当前设备输出分钟数据变化率不超限",
+                b'D' => "当前设备输出分钟数据(存疑)不超限",
+                b'E' => "当前设备输出分钟数据达到最小变化率",
+                _ => item,
+            };
+            let s = match value.chars().next() {
+                Some('0') => "是的（正常）",
+                Some('1') => "不是（错误）",
+                _ => value,
+            };
+            return format!("{}:{}", p, s);
+        }
+        if bytes[0] == b'w' && matches!(bytes[1], b'A' | b'B') {
+            let p = match bytes[1] {
+                b'A' => "电路板温度",
+                b'B' => "探测器温度",
+                _ => item,
+            };
+            return format!("{}:{}℃", p, value);
+        }
+        if bytes[0] == b'x' && matches!(bytes[1], b'A' | b'B' | b'C') {
+            let (p, unit) = match bytes[1] {
+                b'A' => ("供电类型", ""),
+                b'B' => ("外接电源电压", "伏"),
+                b'C' => ("蓄电池电压", "伏"),
+                _ => (item, ""),
+            };
+            return format!("{}:{}{}", p, value, unit);
+        }
+    }
+
     // Three-char items
     if item.len() == 3 {
         let bytes = item.as_bytes();
@@ -197,7 +273,7 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         }
 
         // x-prefix power
-        if bytes[0] == b'x' {
+        if bytes[0] == b'x' && bytes[1] >= b'A' && bytes[1] <= b'H' {
             let (p, unit) = match bytes[1] {
                 b'A' => ("供电类型", ""),
                 b'B' => ("外接电源电压", "伏"),
@@ -458,6 +534,10 @@ pub fn is_kit(item: &str) -> bool {
             b'a' | b'q' | b'r' | b's' | b't' | b'u' | b'v' | b'w' | b'x' | b'y' | b'z'
         );
     }
+    // Named alarms (check before 3-char to avoid aCF being caught by length-3 branch)
+    if matches!(item, "aCF" | "aDOOR" | "aLID" | "aLEVEL" | "aSWITCHA") {
+        return true;
+    }
     // 2-char
     if item.len() == 2 {
         if bytes[0] == b'y' && bytes[1] >= b'A' && bytes[1] <= b'M' {
@@ -473,6 +553,12 @@ pub fn is_kit(item: &str) -> bool {
             return true;
         }
         if bytes[0] == b't' && bytes[1] >= b'A' && bytes[1] <= b'G' && bytes[1] != b'D' {
+            return true;
+        }
+        if bytes[0] == b'w' && matches!(bytes[1], b'A' | b'B') {
+            return true;
+        }
+        if bytes[0] == b'x' && matches!(bytes[1], b'A' | b'B' | b'C') {
             return true;
         }
         return false;
@@ -499,8 +585,6 @@ pub fn is_kit(item: &str) -> bool {
         }
         return false;
     }
-    // Named alarms
-    matches!(item, "aCF" | "aDOOR" | "aLID" | "aLEVEL" | "aSWITCHA")
 }
 
 /// Parse ST packet - port of the parsing loop from tm.c
