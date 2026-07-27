@@ -16,7 +16,7 @@
 //!     --fingerprint "a1b2c3d4e5f67890" \
 //!     --output license.toml
 
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Duration, Utc};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -94,8 +94,12 @@ struct LicenseFeatures {
     reminder_interval_hours: u64,
 }
 
-fn default_degraded_mode() -> bool { true }
-fn default_reminder_interval_hours() -> u64 { 24 }
+fn default_degraded_mode() -> bool {
+    true
+}
+fn default_reminder_interval_hours() -> u64 {
+    24
+}
 
 fn main() {
     let cli = Cli::parse();
@@ -152,10 +156,20 @@ fn main() {
             println!("✅ License generated successfully!");
             println!("   File: {}", cli.output);
             println!("   Issued to: {}", cli.to);
-            println!("   Issued at: {}", issued_at.format("%Y-%m-%d %H:%M:%S UTC"));
-            println!("   Expires:   {} ({} days)", expiry.format("%Y-%m-%d %H:%M:%S UTC"), cli.days);
+            println!(
+                "   Issued at: {}",
+                issued_at.format("%Y-%m-%d %H:%M:%S UTC")
+            );
+            println!(
+                "   Expires:   {} ({} days)",
+                expiry.format("%Y-%m-%d %H:%M:%S UTC"),
+                cli.days
+            );
             if cli.hardware {
-                println!("   Hardware bound: {} fingerprint(s)", cli.fingerprint.len());
+                println!(
+                    "   Hardware bound: {} fingerprint(s)",
+                    cli.fingerprint.len()
+                );
             }
         }
         Err(e) => {
@@ -180,8 +194,8 @@ fn sign_license(mut license: License, secret_key: &str) -> License {
     );
 
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())
-        .expect("HMAC initialization failed");
+    let mut mac =
+        HmacSha256::new_from_slice(secret_key.as_bytes()).expect("HMAC initialization failed");
     mac.update(payload.as_bytes());
     let result = mac.finalize();
     let signature = hex::encode(result.into_bytes());
@@ -194,20 +208,24 @@ fn format_license_toml(license: &License) -> String {
     let hw_fingerprints = if license.hardware.allowed_fingerprints.is_empty() {
         String::new()
     } else {
-        license.hardware.allowed_fingerprints.iter()
+        license
+            .hardware
+            .allowed_fingerprints
+            .iter()
             .map(|f| format!("    \"{}\"", f))
             .collect::<Vec<_>>()
             .join(",\n")
     };
 
-    let hw_section = if license.hardware.enforce && !license.hardware.allowed_fingerprints.is_empty() {
-        format!(
-            "\n[hardware]\nenforce = true\nallowed_fingerprints = [\n{}\n]\n",
-            hw_fingerprints
-        )
-    } else {
-        String::new()
-    };
+    let hw_section =
+        if license.hardware.enforce && !license.hardware.allowed_fingerprints.is_empty() {
+            format!(
+                "\n[hardware]\nenforce = true\nallowed_fingerprints = [\n{}\n]\n",
+                hw_fingerprints
+            )
+        } else {
+            String::new()
+        };
 
     format!(
         r#"# STChck License File
@@ -270,7 +288,8 @@ fn show_fingerprint() {
     {
         if let Ok(output) = std::process::Command::new("ioreg")
             .args(&["-rd1", "-c", "IOPlatformExpertDevice"])
-            .output() {
+            .output()
+        {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if line.contains("IOPlatformUUID") {
@@ -287,7 +306,8 @@ fn show_fingerprint() {
     {
         if let Ok(output) = std::process::Command::new("wmic")
             .args(&["csproduct", "get", "UUID", "/value"])
-            .output() {
+            .output()
+        {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if let Some(val) = line.split('=').nth(1) {
@@ -312,7 +332,7 @@ fn show_fingerprint() {
         process::exit(1);
     }
 
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let combined = parts.join("|");
     let mut hasher = Sha256::new();
     hasher.update(combined.as_bytes());
@@ -323,14 +343,17 @@ fn show_fingerprint() {
     println!("  Hardware Fingerprint: {}", fingerprint);
     println!("═══════════════════════════════════════════════════");
     println!("\nUse this fingerprint when generating a bound license:");
-    println!("  license-gen --to \"Client\" --days 365 --key \"xxx\" --hardware --fingerprint {}", fingerprint);
+    println!(
+        "  license-gen --to \"Client\" --days 365 --key \"xxx\" --hardware --fingerprint {}",
+        fingerprint
+    );
 }
 
 fn get_primary_mac() -> Result<String, String> {
     #[cfg(target_os = "linux")]
     {
-        let entries = fs::read_dir("/sys/class/net")
-            .map_err(|e| format!("Cannot list interfaces: {}", e))?;
+        let entries =
+            fs::read_dir("/sys/class/net").map_err(|e| format!("Cannot list interfaces: {}", e))?;
 
         for entry in entries.flatten() {
             let name = entry.file_name();
@@ -360,9 +383,7 @@ fn get_primary_mac() -> Result<String, String> {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = std::process::Command::new("ifconfig")
-            .arg("en0")
-            .output() {
+        if let Ok(output) = std::process::Command::new("ifconfig").arg("en0").output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 if line.contains("ether") {
@@ -378,7 +399,8 @@ fn get_primary_mac() -> Result<String, String> {
     {
         if let Ok(output) = std::process::Command::new("getmac")
             .args(&["/fo", "csv", "/v"])
-            .output() {
+            .output()
+        {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines().skip(1) {
                 let parts: Vec<&str> = line.split(',').collect();

@@ -1,6 +1,9 @@
 use crate::config::{DatabaseConfig, StationConfig};
-use crate::models::{StationMeta, StationStatus, MonitorSummary, MonitorData, DeviceStatusInfo, DeviceStatusItem, StationDevicesResponse};
-use crate::monitor::{parse_st_packet};
+use crate::models::{
+    DeviceStatusInfo, DeviceStatusItem, MonitorData, MonitorSummary, StationDevicesResponse,
+    StationMeta, StationStatus,
+};
+use crate::monitor::parse_st_packet;
 use chrono::{Local, Timelike};
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -106,7 +109,12 @@ impl DbService {
             .await
         {
             Ok(pool) => {
-                tracing::info!("MySQL 云库连接成功: {}:{}/{}", cloud_cfg.host, cloud_cfg.port, cloud_cfg.db);
+                tracing::info!(
+                    "MySQL 云库连接成功: {}:{}/{}",
+                    cloud_cfg.host,
+                    cloud_cfg.port,
+                    cloud_cfg.db
+                );
                 Some(pool)
             }
             Err(e) => {
@@ -141,21 +149,21 @@ impl DbService {
             name: Option<String>,
         }
 
-        let rows: Vec<DeviceTypeRow> = match sqlx::query_as::<_, DeviceTypeRow>(
-            "SELECT code, name FROM device_type"
-        )
-        .fetch_all(pool)
-        .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                tracing::warn!("加载 device_type 失败: {}", e);
-                return;
-            }
-        };
+        let rows: Vec<DeviceTypeRow> =
+            match sqlx::query_as::<_, DeviceTypeRow>("SELECT code, name FROM device_type")
+                .fetch_all(pool)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    tracing::warn!("加载 device_type 失败: {}", e);
+                    return;
+                }
+            };
 
         for row in rows {
-            self.device_type_names.insert(row.code, row.name.unwrap_or_default());
+            self.device_type_names
+                .insert(row.code, row.name.unwrap_or_default());
         }
         tracing::info!("已加载 {} 个设备类型名称", self.device_type_names.len());
     }
@@ -194,7 +202,7 @@ impl DbService {
         device_type_names.insert("YBLIZ".to_string(), "闪电定位仪".to_string());
         device_type_names.insert("YNEPH".to_string(), "云高仪".to_string());
         device_type_names.insert("YMPAR".to_string(), "多参数仪".to_string());
-        
+
         // 创建本地 SQLite 测试数据库
         let sqlite_pool = match SqlitePoolOptions::new()
             .max_connections(1)
@@ -210,7 +218,7 @@ impl DbService {
                 None
             }
         };
-        
+
         if let Some(pool) = &sqlite_pool {
             // 初始化 data_st 表
             sqlx::query(
@@ -222,12 +230,12 @@ impl DbService {
                     data_time TEXT,
                     receive_time TEXT,
                     data TEXT
-                )"
+                )",
             )
             .execute(pool)
             .await
             .ok();
-            
+
             // 初始化 station_params 表
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS station_params (
@@ -241,12 +249,12 @@ impl DbService {
                     auto_station_type_id TEXT,
                     acid_rain_station INTEGER,
                     reference_radiation_station INTEGER
-                )"
+                )",
             )
             .execute(pool)
             .await
             .ok();
-            
+
             // 站点数据
             let stations = [
                 ("50936", "吉林白城", "吉林", 45.6, 122.8),
@@ -282,7 +290,7 @@ impl DbService {
                 ("52737", "青海德令哈", "无锡", 37.3, 97.3),
                 ("57914", "贵州花溪", "无锡", 26.4, 106.6),
             ];
-            
+
             // 插入站点参数
             for (id, name, province, lat, lon) in &stations {
                 sqlx::query("INSERT OR REPLACE INTO station_params (station_id, station_name, province_name, latitude, longitude) VALUES (?, ?, ?, ?, ?)")
@@ -295,19 +303,24 @@ impl DbService {
                     .await
                     .ok();
             }
-            
+
             // 插入设备数据
             let now = chrono::Local::now();
             let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
             let data_time_compact = now.format("%Y%m%d%H%M%S").to_string();
             let device_types = [
-                ("YTHWS", "N01"), ("YTHWS", "N02"),
-                ("YWIND", "N01"), ("YPREC", "N01"),
-                ("YVISI", "N01"), ("YPRSS", "N01"),
-                ("YSRAD", "N01"), ("YGRND", "N01"),
-                ("YCO2", "N01"), ("YPOWR", "N01"),
+                ("YTHWS", "N01"),
+                ("YTHWS", "N02"),
+                ("YWIND", "N01"),
+                ("YPREC", "N01"),
+                ("YVISI", "N01"),
+                ("YPRSS", "N01"),
+                ("YSRAD", "N01"),
+                ("YGRND", "N01"),
+                ("YCO2", "N01"),
+                ("YPOWR", "N01"),
             ];
-            
+
             for station in &stations {
                 for (dtype, nid) in &device_types {
                     let data = format!(
@@ -326,10 +339,14 @@ impl DbService {
                         .ok();
                 }
             }
-            
-            tracing::info!("SQLite 测试数据初始化完成: {} 个站点, {} 台设备", stations.len(), stations.len() * device_types.len());
+
+            tracing::info!(
+                "SQLite 测试数据初始化完成: {} 个站点, {} 台设备",
+                stations.len(),
+                stations.len() * device_types.len()
+            );
         }
-        
+
         Self {
             pool: None,
             cloud_pool: None,
@@ -344,7 +361,7 @@ impl DbService {
         station_ids: &[StationConfig],
     ) -> HashMap<String, StationMeta> {
         let mut result = HashMap::new();
-        
+
         // 优先使用 SQLite 本地数据库（测试模式）
         if let Some(pool) = self.sqlite_pool.as_ref() {
             let ids_placeholders = station_ids
@@ -352,7 +369,7 @@ impl DbService {
                 .map(|_| "?")
                 .collect::<Vec<_>>()
                 .join(",");
-            
+
             let sql = format!(
                 "SELECT station_id, station_name, province_name, station_address, \
                  latitude, longitude, observation_field_altitude, \
@@ -361,7 +378,7 @@ impl DbService {
                  WHERE station_id IN ({})",
                 ids_placeholders
             );
-            
+
             let mut query = sqlx::query_as::<_, StationParamsRow>(&sql);
             for s in station_ids {
                 query = query.bind(&s.id);
@@ -373,7 +390,7 @@ impl DbService {
                     return result;
                 }
             };
-            
+
             for row in rows {
                 result.insert(
                     row.station_id.clone(),
@@ -382,8 +399,14 @@ impl DbService {
                         station_name: row.station_name.unwrap_or_default(),
                         province: row.province_name.unwrap_or_default(),
                         address: row.station_address.unwrap_or_default(),
-                        latitude: row.latitude.map(|v| parse_dms_coord(&v.to_string())).unwrap_or(0.0),
-                        longitude: row.longitude.map(|v| parse_dms_coord(&v.to_string())).unwrap_or(0.0),
+                        latitude: row
+                            .latitude
+                            .map(|v| parse_dms_coord(&v.to_string()))
+                            .unwrap_or(0.0),
+                        longitude: row
+                            .longitude
+                            .map(|v| parse_dms_coord(&v.to_string()))
+                            .unwrap_or(0.0),
                         altitude: row.observation_field_altitude.unwrap_or(0.0),
                         station_type: row.auto_station_type_id.unwrap_or_default(),
                         is_acid_rain: row.acid_rain_station.unwrap_or(0) != 0,
@@ -393,7 +416,7 @@ impl DbService {
             }
             return result;
         }
-        
+
         let pool = match (self.cloud_pool.as_ref(), self.pool.as_ref()) {
             (Some(p), _) => p,
             (None, Some(p)) => p,
@@ -477,8 +500,7 @@ impl DbService {
         for s in station_ids {
             query = query.bind(&s.id);
         }
-        let rows: Vec<StationParamsRow> = match query.fetch_all(pool).await
-        {
+        let rows: Vec<StationParamsRow> = match query.fetch_all(pool).await {
             Ok(rows) => rows,
             Err(e) => {
                 tracing::warn!("加载 station_params 失败: {}", e);
@@ -490,7 +512,11 @@ impl DbService {
         for row in rows {
             found_ids.insert(row.station_id.clone());
             let province = row.province_name.as_deref().unwrap_or("未知省份").trim();
-            let province = if province.is_empty() { "未知省份".to_string() } else { province.to_string() };
+            let province = if province.is_empty() {
+                "未知省份".to_string()
+            } else {
+                province.to_string()
+            };
             let station_type = row
                 .auto_station_type_id
                 .as_deref()
@@ -551,7 +577,11 @@ impl DbService {
         let start = std::time::Instant::now();
         let pool = self.pool.as_ref().unwrap();
         let station_ids: Vec<String> = stations.iter().map(|s| s.id.clone()).collect();
-        let ids_placeholders = station_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let ids_placeholders = station_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
 
         // Main query - keep as grouped queries but split basic aggregates
         // and distinct device count. On the 15 GB table this is much faster
@@ -568,16 +598,24 @@ impl DbService {
             ids_placeholders
         );
 
-        let mut basic_query = sqlx::query_as::<_, (String, i64, Option<i64>, Option<chrono::NaiveDateTime>, Option<chrono::NaiveDateTime>)>(&basic_sql);
+        let mut basic_query = sqlx::query_as::<
+            _,
+            (
+                String,
+                i64,
+                Option<i64>,
+                Option<chrono::NaiveDateTime>,
+                Option<chrono::NaiveDateTime>,
+            ),
+        >(&basic_sql);
         basic_query = basic_query.bind(check_interval_minutes);
         for id in &station_ids {
             basic_query = basic_query.bind(id);
         }
-        let basic_rows = match basic_query.fetch_all(pool).await
-        {
+        let basic_rows = match basic_query.fetch_all(pool).await {
             Ok(rows) => rows,
             Err(e) => {
-                tracing::error!("主聚合查询失败: {}" , e);
+                tracing::error!("主聚合查询失败: {}", e);
                 return crate::monitor::generate_simulated_data(stations);
             }
         };
@@ -596,16 +634,25 @@ impl DbService {
         for id in &station_ids {
             device_query = device_query.bind(id);
         }
-        let device_rows: std::collections::HashMap<String, i64> = match device_query.fetch_all(pool).await
-        {
-            Ok(rows) => rows.into_iter().collect(),
-            Err(e) => {
-                tracing::warn!("设备数查询失败: {}", e);
-                std::collections::HashMap::new()
-            }
-        };
+        let device_rows: std::collections::HashMap<String, i64> =
+            match device_query.fetch_all(pool).await {
+                Ok(rows) => rows.into_iter().collect(),
+                Err(e) => {
+                    tracing::warn!("设备数查询失败: {}", e);
+                    std::collections::HashMap::new()
+                }
+            };
 
-        let mut rows_map: std::collections::HashMap<String, (i64, Option<i64>, Option<chrono::NaiveDateTime>, Option<chrono::NaiveDateTime>, i64)> = HashMap::new();
+        let mut rows_map: std::collections::HashMap<
+            String,
+            (
+                i64,
+                Option<i64>,
+                Option<chrono::NaiveDateTime>,
+                Option<chrono::NaiveDateTime>,
+                i64,
+            ),
+        > = HashMap::new();
         for row in basic_rows {
             let device_count = device_rows.get(&row.0).copied().unwrap_or(0);
             rows_map.insert(row.0, (row.1, row.2, row.3, row.4, device_count));
@@ -632,13 +679,13 @@ impl DbService {
             ids_placeholders
         );
 
-        let mut arrival_query = sqlx::query_as::<_, (String, Option<chrono::NaiveDateTime>, i64)>(&arrival_sql);
+        let mut arrival_query =
+            sqlx::query_as::<_, (String, Option<chrono::NaiveDateTime>, i64)>(&arrival_sql);
         for id in &station_ids {
             arrival_query = arrival_query.bind(id);
         }
-        let arrival_rows: std::collections::HashMap<String, (Option<chrono::NaiveDateTime>, i64)> = 
-            match arrival_query.fetch_all(pool).await
-            {
+        let arrival_rows: std::collections::HashMap<String, (Option<chrono::NaiveDateTime>, i64)> =
+            match arrival_query.fetch_all(pool).await {
                 Ok(rows) => rows.into_iter().map(|r| (r.0, (r.1, r.2))).collect(),
                 Err(_) => std::collections::HashMap::new(),
             };
@@ -647,8 +694,14 @@ impl DbService {
             let r1 = row.0;
             let r2 = row.1.unwrap_or(0);
             let r5 = row.4;
-            let min_time = row.2.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default();
-            let max_time = row.3.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default();
+            let min_time = row
+                .2
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default();
+            let max_time = row
+                .3
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default();
 
             total_records += r1;
             let info = stations.iter().find(|s| s.id == station_id);
@@ -687,9 +740,11 @@ impl DbService {
             }
 
             // Get last arrival time and recent arrival rate (30 min proxy)
-            let (last_arrival, arrival_rate) = arrival_rows.get(&station_id)
+            let (last_arrival, arrival_rate) = arrival_rows
+                .get(&station_id)
                 .map(|(t, cnt)| {
-                    let last = t.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                    let last = t
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_default();
                     // 30 minutes has 6 expected 5-minute buckets; scale to 100%
                     let rate = (*cnt as f64 / 6.0 * 100.0 * 10.0).round() / 10.0;
@@ -744,7 +799,11 @@ impl DbService {
         };
 
         let duration = start.elapsed();
-        tracing::info!("query_monitor_data 完成: {} 个站点, 耗时 {:?}", stations_out.len(), duration);
+        tracing::info!(
+            "query_monitor_data 完成: {} 个站点, 耗时 {:?}",
+            stations_out.len(),
+            duration
+        );
 
         MonitorData {
             summary: MonitorSummary {
@@ -801,9 +860,12 @@ impl DbService {
                 }
             };
 
-            let now_minute = chrono::Local::now().naive_local()
-                .with_second(0).unwrap()
-                .with_nanosecond(0).unwrap();
+            let now_minute = chrono::Local::now()
+                .naive_local()
+                .with_second(0)
+                .unwrap()
+                .with_nanosecond(0)
+                .unwrap();
             let prev_minute = now_minute - chrono::Duration::minutes(1);
 
             let mut seen: HashSet<(String, String)> = HashSet::new();
@@ -811,15 +873,19 @@ impl DbService {
 
             for row in rows {
                 let key = (row.device_type.clone(), row.device_nid.clone());
-                if seen.contains(&key) { continue; }
+                if seen.contains(&key) {
+                    continue;
+                }
                 seen.insert(key.clone());
 
                 let parsed = parse_st_packet(&row.data);
-                let (common_status, specific_status) = classify_device_status(&parsed, &row.device_type);
+                let (common_status, specific_status) =
+                    classify_device_status(&parsed, &row.device_type);
 
                 let data_time = row.data_time;
                 let is_online = data_time >= now_minute - chrono::Duration::minutes(5);
-                let is_fallback = !is_online && data_time >= now_minute - chrono::Duration::minutes(60);
+                let is_fallback =
+                    !is_online && data_time >= now_minute - chrono::Duration::minutes(60);
 
                 devices.push(DeviceStatusInfo {
                     device_type: row.device_type,
@@ -835,11 +901,16 @@ impl DbService {
 
             devices.sort_by(|a, b| {
                 fn order(info: &DeviceStatusInfo) -> u8 {
-                    if info.is_online { 0 }
-                    else if info.is_fallback { 1 }
-                    else { 2 }
+                    if info.is_online {
+                        0
+                    } else if info.is_fallback {
+                        1
+                    } else {
+                        2
+                    }
                 }
-                order(a).cmp(&order(b))
+                order(a)
+                    .cmp(&order(b))
                     .then_with(|| a.device_type.cmp(&b.device_type))
             });
 
@@ -852,48 +923,63 @@ impl DbService {
             use rand::Rng;
             let mut rng = rand::thread_rng();
             let now = chrono::Local::now();
-            let now_minute = now.naive_local().with_second(0).unwrap().with_nanosecond(0).unwrap();
+            let now_minute = now
+                .naive_local()
+                .with_second(0)
+                .unwrap()
+                .with_nanosecond(0)
+                .unwrap();
             let prev_minute = now_minute - chrono::Duration::minutes(1);
-            
+
             let device_types = [
-                ("YTHWS", "N01"), ("YTHWS", "N02"),
-                ("YWIND", "N01"), ("YPREC", "N01"),
-                ("YVISI", "N01"), ("YPRSS", "N01"),
-                ("YSRAD", "N01"), ("YGRND", "N01"),
-                ("YCO2", "N01"), ("YPOWR", "N01"),
+                ("YTHWS", "N01"),
+                ("YTHWS", "N02"),
+                ("YWIND", "N01"),
+                ("YPREC", "N01"),
+                ("YVISI", "N01"),
+                ("YPRSS", "N01"),
+                ("YSRAD", "N01"),
+                ("YGRND", "N01"),
+                ("YCO2", "N01"),
+                ("YPOWR", "N01"),
             ];
-            
+
             for (dtype, nid) in &device_types {
                 let is_online = rng.gen_range(0.0..1.0) > 0.2;
                 let is_fallback = !is_online && rng.gen_range(0.0..1.0) > 0.3;
-                let data_time = if is_online { now_minute } 
-                    else if is_fallback { prev_minute } 
-                    else { now_minute - chrono::Duration::minutes(rng.gen_range(5..60)) };
-                
+                let data_time = if is_online {
+                    now_minute
+                } else if is_fallback {
+                    prev_minute
+                } else {
+                    now_minute - chrono::Duration::minutes(rng.gen_range(5..60))
+                };
+
                 // 随机生成一些异常状态，让前端测试异常展示
-                let (z_v, ya_v, waa_v, xea_v, tfa_v, ta_v, sa_v) = if rng.gen_range(0.0..1.0) > 0.6 {
-                    ("0","0","0","0","0","0","0")
+                let (z_v, ya_v, waa_v, xea_v, tfa_v, ta_v, sa_v) = if rng.gen_range(0.0..1.0) > 0.6
+                {
+                    ("0", "0", "0", "0", "0", "0", "0")
                 } else {
                     let idx = rng.gen_range(0..6);
                     match idx {
-                        0 => ("1","0","0","0","0","0","0"),
-                        1 => ("0","2","0","0","0","0","0"),
-                        2 => ("0","0","3","0","0","0","0"),
-                        3 => ("0","0","0","4","0","0","0"),
-                        4 => ("0","0","0","0","0","1","0"),
-                        _ => ("0","0","0","0","0","0","1"),
+                        0 => ("1", "0", "0", "0", "0", "0", "0"),
+                        1 => ("0", "2", "0", "0", "0", "0", "0"),
+                        2 => ("0", "0", "3", "0", "0", "0", "0"),
+                        3 => ("0", "0", "0", "4", "0", "0", "0"),
+                        4 => ("0", "0", "0", "0", "0", "1", "0"),
+                        _ => ("0", "0", "0", "0", "0", "0", "1"),
                     }
                 };
-                
+
                 let data = format!(
                     "DATADICK,V202201,{},{}{},{},ST,{},z,{},yA,{},yB,0,wA,25.0,wAA,{},xB,220,xC,12.6,xE,12.6,xEA,{},xF,37,xFA,{},tA,{},sA,{},rA,0,qA,0,vA,0,uD,0",
                     station_id, dtype, nid, nid, data_time.format("%Y%m%d%H%M%S"),
                     z_v, ya_v, waa_v, xea_v, tfa_v, ta_v, sa_v
                 );
-                
+
                 let parsed = parse_st_packet(&data);
                 let (common_status, specific_status) = classify_device_status(&parsed, dtype);
-                
+
                 result.devices.push(DeviceStatusInfo {
                     device_type: dtype.to_string(),
                     device_nid: nid.to_string(),
@@ -905,17 +991,22 @@ impl DbService {
                     specific_status,
                 });
             }
-            
+
             result.devices.sort_by(|a, b| {
                 fn order(info: &DeviceStatusInfo) -> u8 {
-                    if info.is_online { 0 }
-                    else if info.is_fallback { 1 }
-                    else { 2 }
+                    if info.is_online {
+                        0
+                    } else if info.is_fallback {
+                        1
+                    } else {
+                        2
+                    }
                 }
-                order(a).cmp(&order(b))
+                order(a)
+                    .cmp(&order(b))
                     .then_with(|| a.device_type.cmp(&b.device_type))
             });
-            
+
             return result;
         }
 
@@ -953,9 +1044,12 @@ impl DbService {
             }
         };
 
-        let now_minute = chrono::Local::now().naive_local()
-            .with_second(0).unwrap()
-            .with_nanosecond(0).unwrap();
+        let now_minute = chrono::Local::now()
+            .naive_local()
+            .with_second(0)
+            .unwrap()
+            .with_nanosecond(0)
+            .unwrap();
         let prev_minute = now_minute - chrono::Duration::minutes(1);
 
         let mut seen: HashSet<(String, String)> = HashSet::new();
@@ -963,16 +1057,16 @@ impl DbService {
 
         for row in rows {
             let key = (row.device_type.clone(), row.device_nid.clone());
-            if seen.contains(&key) { continue; }
+            if seen.contains(&key) {
+                continue;
+            }
             seen.insert(key);
 
             let is_online = row.data_time == now_minute;
             let is_fallback = row.data_time == prev_minute;
             let parsed = parse_st_packet(&row.data);
-            let (common_status, specific_status) = classify_device_status(
-                &parsed,
-                &row.device_type,
-            );
+            let (common_status, specific_status) =
+                classify_device_status(&parsed, &row.device_type);
 
             devices.push(DeviceStatusInfo {
                 device_type: row.device_type.clone(),
@@ -988,11 +1082,16 @@ impl DbService {
 
         devices.sort_by(|a, b| {
             fn order(info: &DeviceStatusInfo) -> u8 {
-                if info.is_online { 0 }
-                else if info.is_fallback { 1 }
-                else { 2 }
+                if info.is_online {
+                    0
+                } else if info.is_fallback {
+                    1
+                } else {
+                    2
+                }
             }
-            order(a).cmp(&order(b))
+            order(a)
+                .cmp(&order(b))
                 .then_with(|| a.device_type.cmp(&b.device_type))
         });
 
@@ -1011,7 +1110,10 @@ fn classify_device_status(
     for item in parsed {
         let code = item.item.clone();
         let first_char = code.chars().next().unwrap_or(' ');
-        let is_common = matches!(first_char, 'z' | 'x' | 'w' | 'v' | 'u' | 't' | 's' | 'r' | 'q');
+        let is_common = matches!(
+            first_char,
+            'z' | 'x' | 'w' | 'v' | 'u' | 't' | 's' | 'r' | 'q'
+        );
         let is_specific = matches!(first_char, 'y' | 'a');
 
         if is_common {
@@ -1023,9 +1125,7 @@ fn classify_device_status(
                 abnormal: item.abnormal,
             });
         } else if is_specific {
-            if is_specific_applicable(&code,
-                device_type,
-            ) {
+            if is_specific_applicable(&code, device_type) {
                 specific.push(DeviceStatusItem {
                     code: code.clone(),
                     name: get_status_item_name(&code),
@@ -1045,13 +1145,15 @@ fn is_specific_applicable(code: &str, device_type: &str) -> bool {
     let prefix = upper.chars().take(5).collect::<String>();
 
     // yA, yB, yN are general measurement/auxiliary/power-on status
-    if code == "yA" || code == "yB" || code == "yN" ||
-       code == "aCF" || code == "aDOOR" {
+    if code == "yA" || code == "yB" || code == "yN" || code == "aCF" || code == "aDOOR" {
         return prefix.starts_with("YACID");
     }
 
     // Tipping bucket / rain gauge specific
-    if matches!(code.as_bytes().get(0..2), Some(b"yC") | Some(b"yD") | Some(b"yE") | Some(b"yF") | Some(b"yG") | Some(b"yH")) {
+    if matches!(
+        code.as_bytes().get(0..2),
+        Some(b"yC") | Some(b"yD") | Some(b"yE") | Some(b"yF") | Some(b"yG") | Some(b"yH")
+    ) {
         return prefix.starts_with("YPRES");
     }
 
@@ -1061,7 +1163,10 @@ fn is_specific_applicable(code: &str, device_type: &str) -> bool {
     }
 
     // Camera specific
-    if matches!(code.as_bytes().get(0..2), Some(b"yK") | Some(b"yL") | Some(b"yM")) {
+    if matches!(
+        code.as_bytes().get(0..2),
+        Some(b"yK") | Some(b"yL") | Some(b"yM")
+    ) {
         return prefix.starts_with("YCLOD");
     }
 

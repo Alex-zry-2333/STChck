@@ -58,8 +58,12 @@ pub mod license {
         pub reminder_interval_hours: u64,
     }
 
-    fn default_degraded_mode() -> bool { true }
-    fn default_reminder_interval_hours() -> u64 { 24 }
+    fn default_degraded_mode() -> bool {
+        true
+    }
+    fn default_reminder_interval_hours() -> u64 {
+        24
+    }
 
     #[derive(Debug, Clone)]
     pub struct LicenseState {
@@ -283,12 +287,11 @@ pub mod license {
 
         // Secret key: embedded in binary at build time via env var
         // Production builds should set STCHCK_LICENSE_KEY
-        let secret_key = std::env::var("STCHCK_LICENSE_KEY")
-            .unwrap_or_else(|_| {
-                // Fallback: use a default key (NOT for production!)
-                tracing::warn!("STCHCK_LICENSE_KEY not set, using default key — INSECURE!");
-                "stchck-default-dev-key-2026".to_string()
-            });
+        let secret_key = std::env::var("STCHCK_LICENSE_KEY").unwrap_or_else(|_| {
+            // Fallback: use a default key (NOT for production!)
+            tracing::warn!("STCHCK_LICENSE_KEY not set, using default key — INSECURE!");
+            "stchck-default-dev-key-2026".to_string()
+        });
 
         type HmacSha256 = Hmac<Sha256>;
         let mut mac = HmacSha256::new_from_slice(secret_key.as_bytes())
@@ -298,7 +301,10 @@ pub mod license {
         let expected = hex::encode(result.into_bytes());
 
         // Signature in license file may be prefixed with "sha256="
-        let sig_value = license.signature.strip_prefix("sha256=").unwrap_or(&license.signature);
+        let sig_value = license
+            .signature
+            .strip_prefix("sha256=")
+            .unwrap_or(&license.signature);
 
         if expected != sig_value {
             return Err(format!(
@@ -323,14 +329,19 @@ pub mod license {
 
         match get_machine_fingerprint() {
             Some(fp) => {
-                let allowed: HashSet<String> = license.hardware.allowed_fingerprints.iter()
+                let allowed: HashSet<String> = license
+                    .hardware
+                    .allowed_fingerprints
+                    .iter()
                     .map(|s| s.to_lowercase())
                     .collect();
                 allowed.contains(&fp.to_lowercase())
             }
             None => {
                 // Cannot determine fingerprint — fail safe
-                tracing::warn!("Cannot determine machine fingerprint, but hardware binding is enforced");
+                tracing::warn!(
+                    "Cannot determine machine fingerprint, but hardware binding is enforced"
+                );
                 false
             }
         }
@@ -367,7 +378,8 @@ pub mod license {
             // macOS: use IOPlatformUUID
             if let Ok(output) = std::process::Command::new("ioreg")
                 .args(&["-rd1", "-c", "IOPlatformExpertDevice"])
-                .output() {
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
                     if line.contains("IOPlatformUUID") {
@@ -384,7 +396,8 @@ pub mod license {
             // Windows: use wmic
             if let Ok(output) = std::process::Command::new("wmic")
                 .args(&["csproduct", "get", "UUID", "/value"])
-                .output() {
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
                     if let Some(val) = line.split('=').nth(1) {
@@ -407,7 +420,7 @@ pub mod license {
         }
 
         // Combine and hash
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let combined = parts.join("|");
         let mut hasher = Sha256::new();
         hasher.update(combined.as_bytes());
@@ -442,9 +455,7 @@ pub mod license {
 
         #[cfg(target_os = "macos")]
         {
-            if let Ok(output) = std::process::Command::new("ifconfig")
-                .arg("en0")
-                .output() {
+            if let Ok(output) = std::process::Command::new("ifconfig").arg("en0").output() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
                     if line.contains("ether") {
@@ -460,7 +471,8 @@ pub mod license {
         {
             if let Ok(output) = std::process::Command::new("getmac")
                 .args(&["/fo", "csv", "/v"])
-                .output() {
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines().skip(1) {
                     let parts: Vec<&str> = line.split(',').collect();
@@ -516,8 +528,12 @@ pub mod license {
         }
     }
 
-    pub fn is_expired() -> bool { false }
-    pub fn is_invalid() -> bool { false }
+    pub fn is_expired() -> bool {
+        false
+    }
+    pub fn is_invalid() -> bool {
+        false
+    }
 
     pub fn get_status(_state: &LicenseState) -> serde_json::Value {
         serde_json::json!({

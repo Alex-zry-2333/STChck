@@ -72,7 +72,10 @@ fn cleanup_previous_instances() {
 #[cfg(not(target_os = "windows"))]
 fn cleanup_previous_instances() {}
 
-async fn try_bind_port(base_port: u32, max_attempts: u32) -> Option<(tokio::net::TcpListener, u32)> {
+async fn try_bind_port(
+    base_port: u32,
+    max_attempts: u32,
+) -> Option<(tokio::net::TcpListener, u32)> {
     for offset in 0..max_attempts {
         let port = base_port + offset;
         if port > 65535 {
@@ -146,7 +149,7 @@ async fn main() {
     // License verification (compile-time controlled)
     // ============================================================
     let license_state = license::license::verify();
-    
+
     if license_state.expired {
         tracing::warn!("╔════════════════════════════════════════════════════════════╗");
         tracing::warn!("║  ⚠️  LICENSE EXPIRED — Running in DEGRADED MODE          ║");
@@ -215,26 +218,37 @@ async fn main() {
     // Runtime license reminder (degraded mode)
     // ============================================================
     if license_state.expired || license_state.invalid {
-        let reminder_interval = license_state.license_info.as_ref()
+        let reminder_interval = license_state
+            .license_info
+            .as_ref()
             .map(|l| l.features.reminder_interval_hours)
             .unwrap_or(24);
-        
+
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(reminder_interval * 3600));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(reminder_interval * 3600));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             interval.tick().await; // skip first immediate tick
-            
+
             loop {
                 interval.tick().await;
                 if license::license::is_expired() {
-                    tracing::warn!("╔════════════════════════════════════════════════════════════╗");
+                    tracing::warn!(
+                        "╔════════════════════════════════════════════════════════════╗"
+                    );
                     tracing::warn!("║  ⏰ LICENSE REMINDER: Your license has EXPIRED.           ║");
                     tracing::warn!("║  Please contact support to renew.                        ║");
-                    tracing::warn!("╚════════════════════════════════════════════════════════════╝");
+                    tracing::warn!(
+                        "╚════════════════════════════════════════════════════════════╝"
+                    );
                 } else if license::license::is_invalid() {
-                    tracing::warn!("╔════════════════════════════════════════════════════════════╗");
+                    tracing::warn!(
+                        "╔════════════════════════════════════════════════════════════╗"
+                    );
                     tracing::warn!("║  ⏰ LICENSE REMINDER: No valid license file found.        ║");
-                    tracing::warn!("╚════════════════════════════════════════════════════════════╝");
+                    tracing::warn!(
+                        "╚════════════════════════════════════════════════════════════╝"
+                    );
                 }
             }
         });

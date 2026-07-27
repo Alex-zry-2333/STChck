@@ -70,7 +70,8 @@ impl Config {
             fs::read_to_string(path).expect("Failed to read config.toml")
         } else {
             // Try next to the binary
-            let exe_path = std::env::current_exe().ok()
+            let exe_path = std::env::current_exe()
+                .ok()
                 .and_then(|p| p.parent().map(|d| d.join("config.toml")))
                 .filter(|p| p.exists());
             if let Some(p) = exe_path {

@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
     use crate::config::{Config, StationConfig};
-    use crate::models::{StationStatus, StationMeta};
-    use crate::monitor::{get_alarm, is_kit, parse_st_packet, get_station_index, generate_simulated_data, calculate_risk_score, risk_level};
+    use crate::models::{StationMeta, StationStatus};
+    use crate::monitor::{
+        calculate_risk_score, generate_simulated_data, get_alarm, get_station_index, is_kit,
+        parse_st_packet, risk_level,
+    };
 
     // === get_alarm tests ===
 
@@ -165,7 +168,7 @@ mod tests {
     fn test_parse_st_packet_basic() {
         let data = "ST,001,001,2024,01,01,00,wA,25.0,xB,220,tA,0,sA,0,aCF,0,aDOOR,1";
         let result = parse_st_packet(data);
-        
+
         // wA=25.0 is a kit, value != 0 so abnormal
         let wa = result.iter().find(|r| r.item == "wA");
         assert!(wa.is_some());
@@ -207,8 +210,16 @@ mod tests {
     #[test]
     fn test_get_station_index_found() {
         let stations = vec![
-            StationConfig { id: "001".to_string(), name: "Station 1".to_string(), vendor: "A".to_string() },
-            StationConfig { id: "002".to_string(), name: "Station 2".to_string(), vendor: "B".to_string() },
+            StationConfig {
+                id: "001".to_string(),
+                name: "Station 1".to_string(),
+                vendor: "A".to_string(),
+            },
+            StationConfig {
+                id: "002".to_string(),
+                name: "Station 2".to_string(),
+                vendor: "B".to_string(),
+            },
         ];
         let found = get_station_index(&stations, "001");
         assert!(found.is_some());
@@ -217,9 +228,11 @@ mod tests {
 
     #[test]
     fn test_get_station_index_not_found() {
-        let stations = vec![
-            StationConfig { id: "001".to_string(), name: "Station 1".to_string(), vendor: "A".to_string() },
-        ];
+        let stations = vec![StationConfig {
+            id: "001".to_string(),
+            name: "Station 1".to_string(),
+            vendor: "A".to_string(),
+        }];
         let found = get_station_index(&stations, "999");
         assert!(found.is_none());
     }
@@ -229,11 +242,19 @@ mod tests {
     #[test]
     fn test_generate_simulated_data() {
         let stations = vec![
-            StationConfig { id: "001".to_string(), name: "Station 1".to_string(), vendor: "A".to_string() },
-            StationConfig { id: "002".to_string(), name: "Station 2".to_string(), vendor: "B".to_string() },
+            StationConfig {
+                id: "001".to_string(),
+                name: "Station 1".to_string(),
+                vendor: "A".to_string(),
+            },
+            StationConfig {
+                id: "002".to_string(),
+                name: "Station 2".to_string(),
+                vendor: "B".to_string(),
+            },
         ];
         let data = generate_simulated_data(&stations);
-        
+
         assert_eq!(data.stations.len(), 2);
         assert_eq!(data.summary.total, 2);
         assert!(data.summary.online <= 2);
@@ -245,7 +266,7 @@ mod tests {
     fn test_generate_simulated_data_empty() {
         let stations: Vec<StationConfig> = vec![];
         let data = generate_simulated_data(&stations);
-        
+
         assert!(data.stations.is_empty());
         assert_eq!(data.summary.total, 0);
         assert_eq!(data.summary.online, 0);
@@ -312,7 +333,12 @@ mod tests {
             max_time: "2024-01-01 23:59:59".to_string(),
             devices: 3,
             online: true,
-            alarms: vec!["alarm1".to_string(), "alarm2".to_string(), "alarm3".to_string(), "alarm4".to_string()],
+            alarms: vec![
+                "alarm1".to_string(),
+                "alarm2".to_string(),
+                "alarm3".to_string(),
+                "alarm4".to_string(),
+            ],
             alarm_count: 4,
             last_arrival_time: "2024-01-01 23:00:00".to_string(),
             arrival_rate_24h: 80.0,

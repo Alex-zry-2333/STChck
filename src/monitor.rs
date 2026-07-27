@@ -1,6 +1,9 @@
 use crate::config::StationConfig;
-use crate::models::{CheckItem, ForecastDetail, ForecastOverview, MonitorData, MonitorSummary, StationMeta, StationStatus};
-use chrono::{Local, Duration, DateTime};
+use crate::models::{
+    CheckItem, ForecastDetail, ForecastOverview, MonitorData, MonitorSummary, StationMeta,
+    StationStatus,
+};
+use chrono::{DateTime, Duration, Local};
 use rand::Rng;
 use std::collections::HashMap;
 
@@ -71,26 +74,50 @@ pub fn get_alarm(item: &str, value: &str) -> String {
     // Single-char items (a, q, r, s, t, u, v, w, x, y, z)
     fn single_prefix(c: char) -> &'static str {
         match c {
-            'a' => "其他工作", 'q' => "分钟数据", 'r' => "采样数据",
-            's' => "污染状态", 't' => "通讯状态", 'u' => "通风部件",
-            'v' => "加热部件", 'w' => "温度状态", 'x' => "供电状态",
-            'y' => "测量仪", 'z' => "设备自检",
+            'a' => "其他工作",
+            'q' => "分钟数据",
+            'r' => "采样数据",
+            's' => "污染状态",
+            't' => "通讯状态",
+            'u' => "通风部件",
+            'v' => "加热部件",
+            'w' => "温度状态",
+            'x' => "供电状态",
+            'y' => "测量仪",
+            'z' => "设备自检",
             _ => "",
         }
     }
 
     fn generic_suffix(v: char) -> &'static str {
         match v {
-            '0' => "正常", '1' => "异常", '2' => "故障（未检测到）",
-            '3' => "偏高", '4' => "偏低", '5' => "超上限", '6' => "超下限",
-            '7' => "预留", '8' => "预留", '9' => "未检查", 'N' => "关闭或无配置",
+            '0' => "正常",
+            '1' => "异常",
+            '2' => "故障（未检测到）",
+            '3' => "偏高",
+            '4' => "偏低",
+            '5' => "超上限",
+            '6' => "超下限",
+            '7' => "预留",
+            '8' => "预留",
+            '9' => "未检查",
+            'N' => "关闭或无配置",
             _ => "",
         }
     }
 
-    let is_single = item.len() == 1 && matches!(item.as_bytes()[0], b'a' | b'q' | b'r' | b's' | b't' | b'u' | b'v' | b'w' | b'x' | b'y' | b'z');
-    let is_yAB = item.len() == 2 && item.as_bytes()[0] == b'y' && (item.as_bytes()[1] == b'A' || item.as_bytes()[1] == b'B');
-    let is_uABC = item.len() == 2 && item.as_bytes()[0] == b'u' && item.as_bytes()[1] >= b'A' && item.as_bytes()[1] <= b'C';
+    let is_single = item.len() == 1
+        && matches!(
+            item.as_bytes()[0],
+            b'a' | b'q' | b'r' | b's' | b't' | b'u' | b'v' | b'w' | b'x' | b'y' | b'z'
+        );
+    let is_yAB = item.len() == 2
+        && item.as_bytes()[0] == b'y'
+        && (item.as_bytes()[1] == b'A' || item.as_bytes()[1] == b'B');
+    let is_uABC = item.len() == 2
+        && item.as_bytes()[0] == b'u'
+        && item.as_bytes()[1] >= b'A'
+        && item.as_bytes()[1] <= b'C';
 
     if is_single || is_yAB || is_uABC {
         let prefix = if is_single {
@@ -100,14 +127,16 @@ pub fn get_alarm(item: &str, value: &str) -> String {
                 b'A' => "测量部分自检",
                 b'B' => "辅助设备自检",
                 _ => item,
-            }.to_string()
+            }
+            .to_string()
         } else {
             match item.as_bytes()[1] {
                 b'A' => "设备通风",
                 b'B' => "发射器通风",
                 b'C' => "接收器通风",
                 _ => item,
-            }.to_string()
+            }
+            .to_string()
         };
         let suffix = value.chars().next().map(generic_suffix).unwrap_or("");
         return format!("{}:{}", prefix, suffix);
@@ -119,13 +148,19 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         // y[C-H,J]: tipping bucket etc
         if bytes[0] == b'y' && ((bytes[1] >= b'C' && bytes[1] <= b'H') || bytes[1] == b'J') {
             let p = match bytes[1] {
-                b'C' => "翻斗雨量", b'D' => "筒口", b'E' => "上翻斗",
-                b'F' => "计数翻斗", b'G' => "计数翻斗1", b'H' => "计数翻斗2",
+                b'C' => "翻斗雨量",
+                b'D' => "筒口",
+                b'E' => "上翻斗",
+                b'F' => "计数翻斗",
+                b'G' => "计数翻斗1",
+                b'H' => "计数翻斗2",
                 b'J' => "颗粒物谱传感器",
                 _ => item,
             };
             let s = match value.chars().next() {
-                Some('0') => "正常", Some('1') => "异常", Some('2') => "堵塞",
+                Some('0') => "正常",
+                Some('1') => "异常",
+                Some('2') => "堵塞",
                 _ => value,
             };
             return format!("{}:{}", p, s);
@@ -139,12 +174,16 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         }
         if bytes[0] == b'y' && bytes[1] >= b'K' && bytes[1] <= b'M' {
             let p = match bytes[1] {
-                b'K' => "鱼眼相机", b'L' => "普通相机1", b'M' => "普通相机2",
+                b'K' => "鱼眼相机",
+                b'L' => "普通相机1",
+                b'M' => "普通相机2",
                 _ => item,
             };
             let s = match value.chars().next() {
-                Some('0') => "正常", Some('1') => "可连接但无法拍照",
-                Some('2') => "无法连接", _ => value,
+                Some('0') => "正常",
+                Some('1') => "可连接但无法拍照",
+                Some('2') => "无法连接",
+                _ => value,
             };
             return format!("{}:{}", p, s);
         }
@@ -176,8 +215,11 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         // w-prefix temperature
         if bytes[0] == b'w' {
             let p = match bytes[1] {
-                b'A' => "电路板温度", b'B' => "探测器温度", b'C' => "腔体温度",
-                b'D' => "恒温器温度", b'E' => "机箱温度",
+                b'A' => "电路板温度",
+                b'B' => "探测器温度",
+                b'C' => "腔体温度",
+                b'D' => "恒温器温度",
+                b'E' => "机箱温度",
                 _ => item,
             };
             return format!("{}:{}℃", p, value);
@@ -186,10 +228,14 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         // v-prefix heating
         if bytes[0] == b'v' {
             let p = match bytes[1] {
-                b'A' => "设备加热开关状态", b'B' => "发射器加热开关状态",
-                b'C' => "接收器加热开关状态", b'D' => "相机加热开关状态",
-                b'E' => "鱼眼摄像机加热开关状态", b'F' => "普通摄像机1加热开关状态",
-                b'G' => "普通摄像机2加热开关状态", b'H' => "风速加热开关状态",
+                b'A' => "设备加热开关状态",
+                b'B' => "发射器加热开关状态",
+                b'C' => "接收器加热开关状态",
+                b'D' => "相机加热开关状态",
+                b'E' => "鱼眼摄像机加热开关状态",
+                b'F' => "普通摄像机1加热开关状态",
+                b'G' => "普通摄像机2加热开关状态",
+                b'H' => "风速加热开关状态",
                 b'I' => "风向加热开关状态",
                 _ => item,
             };
@@ -209,14 +255,19 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         // t-prefix communication
         if bytes[0] == b't' {
             let p = match bytes[1] {
-                b'A' => "设备到智能集成处理器通信状态", b'B' => "总线状态",
-                b'C' => "串口通信状态", b'D' => "网口通信状态",
-                b'E' => "鱼眼相机网口通信状态", b'F' => "普通相机1网口通信状态",
+                b'A' => "设备到智能集成处理器通信状态",
+                b'B' => "总线状态",
+                b'C' => "串口通信状态",
+                b'D' => "网口通信状态",
+                b'E' => "鱼眼相机网口通信状态",
+                b'F' => "普通相机1网口通信状态",
                 b'G' => "普通相机2网口通信状态",
                 _ => item,
             };
             let s = match value.chars().next() {
-                Some('0') => "正常", Some('1') => "故障", Some('2') => "未启用",
+                Some('0') => "正常",
+                Some('1') => "故障",
+                Some('2') => "未启用",
                 _ => value,
             };
             return format!("{}:{}", p, s);
@@ -225,13 +276,20 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         // s-prefix pollution
         if bytes[0] == b's' {
             let p = match bytes[1] {
-                b'A' => "窗口", b'B' => "探测器", b'C' => "镜头", b'D' => "鱼眼镜头",
-                b'E' => "摄像头1", b'F' => "摄像头2", b'G' => "降水现象仪1窗口",
+                b'A' => "窗口",
+                b'B' => "探测器",
+                b'C' => "镜头",
+                b'D' => "鱼眼镜头",
+                b'E' => "摄像头1",
+                b'F' => "摄像头2",
+                b'G' => "降水现象仪1窗口",
                 b'H' => "降水现象仪2窗口",
                 _ => item,
             };
             let s = match value.chars().next() {
-                Some('0') => "正常", Some('1') => "一般污染", Some('2') => "严重污染",
+                Some('0') => "正常",
+                Some('1') => "一般污染",
+                Some('2') => "严重污染",
                 _ => value,
             };
             return format!("{}:{}", p, s);
@@ -240,7 +298,8 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         // r-prefix sampling
         if bytes[0] == b'r' {
             let p = match bytes[1] {
-                b'A' => "分钟采样值超上限次数", b'B' => "分钟采样值超下限次数",
+                b'A' => "分钟采样值超上限次数",
+                b'B' => "分钟采样值超下限次数",
                 b'C' => "分钟采样值跳变超限次数",
                 _ => item,
             };
@@ -258,7 +317,8 @@ pub fn get_alarm(item: &str, value: &str) -> String {
                 _ => item,
             };
             let s = match value.chars().next() {
-                Some('0') => "是的（正常）", Some('1') => "不是（错误）",
+                Some('0') => "是的（正常）",
+                Some('1') => "不是（错误）",
                 _ => value,
             };
             return format!("{}:{}", p, s);
@@ -271,47 +331,71 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         if bytes[2] == b'A' {
             if bytes[0] == b'x' {
                 let p = match bytes[1] {
-                    b'E' => "主板电压", b'F' => "工作电流", b'G' => "加热电压",
+                    b'E' => "主板电压",
+                    b'F' => "工作电流",
+                    b'G' => "加热电压",
                     _ => item,
                 };
                 let s = match value.chars().next() {
-                    Some('0') => "正常", Some('3') => "偏高", Some('4') => "偏低",
+                    Some('0') => "正常",
+                    Some('3') => "偏高",
+                    Some('4') => "偏低",
                     _ => value,
                 };
                 return format!("{}:{}", p, s);
             }
             if bytes[0] == b'w' {
                 let p = match bytes[1] {
-                    b'A' => "电路板温度", b'C' => "腔体温度", _ => item,
+                    b'A' => "电路板温度",
+                    b'C' => "腔体温度",
+                    _ => item,
                 };
                 let s = match value.chars().next() {
-                    Some('0') => "正常", Some('3') => "偏高", Some('4') => "偏低",
+                    Some('0') => "正常",
+                    Some('3') => "偏高",
+                    Some('4') => "偏低",
                     _ => value,
                 };
                 return format!("{}:{}", p, s);
             }
             if bytes[0] == b'v' {
                 let p = match bytes[1] {
-                    b'A' => "设备加热", b'B' => "发射器加热", b'C' => "接收器加热",
-                    b'D' => "相机加热", b'E' => "鱼眼相机加热", b'F' => "摄像机1加热",
-                    b'G' => "摄像机2加热", b'H' => "风速加热", b'I' => "风向加热",
-                    b'J' => "降水现象仪通道1加热", b'K' => "降水现象仪通道2加热",
+                    b'A' => "设备加热",
+                    b'B' => "发射器加热",
+                    b'C' => "接收器加热",
+                    b'D' => "相机加热",
+                    b'E' => "鱼眼相机加热",
+                    b'F' => "摄像机1加热",
+                    b'G' => "摄像机2加热",
+                    b'H' => "风速加热",
+                    b'I' => "风向加热",
+                    b'J' => "降水现象仪通道1加热",
+                    b'K' => "降水现象仪通道2加热",
                     _ => item,
                 };
                 let s = match value.chars().next() {
-                    Some('0') => "正常", Some('1') => "异常", Some('2') => "故障",
-                    Some('3') => "偏高", Some('4') => "偏低", Some('5') => "停止",
+                    Some('0') => "正常",
+                    Some('1') => "异常",
+                    Some('2') => "故障",
+                    Some('3') => "偏高",
+                    Some('4') => "偏低",
+                    Some('5') => "停止",
                     _ => value,
                 };
                 return format!("{}:{}", p, s);
             }
             if bytes[0] == b'u' {
                 let p = match bytes[1] {
-                    b'D' => "通风罩通风", b'E' => "通风罩转速", _ => item,
+                    b'D' => "通风罩通风",
+                    b'E' => "通风罩转速",
+                    _ => item,
                 };
                 let s = match value.chars().next() {
-                    Some('0') => "正常", Some('1') => "异常", Some('2') => "故障",
-                    Some('3') => "偏高", Some('4') => "偏低",
+                    Some('0') => "正常",
+                    Some('1') => "异常",
+                    Some('2') => "故障",
+                    Some('3') => "偏高",
+                    Some('4') => "偏低",
                     _ => value,
                 };
                 return format!("{}:{}", p, s);
@@ -320,11 +404,15 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         // tDA..tDC
         if bytes[0] == b't' && bytes[1] == b'D' {
             let p = match bytes[2] {
-                b'A' => "鱼眼摄像机网口", b'B' => "普通摄像机1网口",
-                b'C' => "普通摄像机2网口", _ => item,
+                b'A' => "鱼眼摄像机网口",
+                b'B' => "普通摄像机1网口",
+                b'C' => "普通摄像机2网口",
+                _ => item,
             };
             let s = match value.chars().next() {
-                Some('0') => "正常", Some('1') => "故障", Some('2') => "未启用",
+                Some('0') => "正常",
+                Some('1') => "故障",
+                Some('2') => "未启用",
                 _ => value,
             };
             return format!("{}:{}", p, s);
@@ -332,16 +420,20 @@ pub fn get_alarm(item: &str, value: &str) -> String {
         // tFA..tFC
         if bytes[0] == b't' && bytes[1] == b'F' {
             let p = match bytes[2] {
-                b'A' => "无线信号强度", b'B' => "无线信号强度",
-                b'C' => "无线连接状态", _ => item,
+                b'A' => "无线信号强度",
+                b'B' => "无线信号强度",
+                b'C' => "无线连接状态",
+                _ => item,
             };
             return match bytes[2] {
                 b'A' => format!("{}:{} dBm", p, value),
                 b'B' => format!("{}:{} 级", p, value),
                 b'C' => {
                     let s = match value.chars().next() {
-                        Some('0') => "正常", Some('7') => "物理链接断开",
-                        Some('8') => "逻辑链路断开", _ => value,
+                        Some('0') => "正常",
+                        Some('7') => "物理链接断开",
+                        Some('8') => "逻辑链路断开",
+                        _ => value,
                     };
                     format!("{}:{}", p, s)
                 }
@@ -361,25 +453,50 @@ pub fn is_kit(item: &str) -> bool {
     let bytes = item.as_bytes();
     // 1-char: a, q-z
     if item.len() == 1 {
-        return matches!(bytes[0], b'a' | b'q' | b'r' | b's' | b't' | b'u' | b'v' | b'w' | b'x' | b'y' | b'z');
+        return matches!(
+            bytes[0],
+            b'a' | b'q' | b'r' | b's' | b't' | b'u' | b'v' | b'w' | b'x' | b'y' | b'z'
+        );
     }
     // 2-char
     if item.len() == 2 {
-        if bytes[0] == b'y' && bytes[1] >= b'A' && bytes[1] <= b'M' { return true; }
-        if bytes[0] == b's' && bytes[1] >= b'A' && bytes[1] <= b'H' { return true; }
-        if bytes[0] == b'q' && bytes[1] >= b'A' && bytes[1] <= b'E' { return true; }
-        if bytes[0] == b'u' && bytes[1] >= b'A' && bytes[1] <= b'C' { return true; }
-        if bytes[0] == b't' && bytes[1] >= b'A' && bytes[1] <= b'G' && bytes[1] != b'D' { return true; }
+        if bytes[0] == b'y' && bytes[1] >= b'A' && bytes[1] <= b'M' {
+            return true;
+        }
+        if bytes[0] == b's' && bytes[1] >= b'A' && bytes[1] <= b'H' {
+            return true;
+        }
+        if bytes[0] == b'q' && bytes[1] >= b'A' && bytes[1] <= b'E' {
+            return true;
+        }
+        if bytes[0] == b'u' && bytes[1] >= b'A' && bytes[1] <= b'C' {
+            return true;
+        }
+        if bytes[0] == b't' && bytes[1] >= b'A' && bytes[1] <= b'G' && bytes[1] != b'D' {
+            return true;
+        }
         return false;
     }
     // 3-char
     if item.len() == 3 {
-        if bytes[0] == b'x' && matches!(bytes[1], b'E' | b'F' | b'G') && bytes[2] == b'A' { return true; }
-        if bytes[0] == b'w' && matches!(bytes[1], b'A' | b'C') && bytes[2] == b'A' { return true; }
-        if bytes[0] == b'v' && bytes[1] >= b'A' && bytes[1] <= b'K' && bytes[2] == b'A' { return true; }
-        if bytes[0] == b'u' && matches!(bytes[1], b'D' | b'E') && bytes[2] == b'A' { return true; }
-        if bytes[0] == b't' && bytes[1] == b'D' && bytes[2] >= b'A' && bytes[2] <= b'C' { return true; }
-        if bytes[0] == b't' && bytes[1] == b'F' && bytes[2] == b'C' { return true; }
+        if bytes[0] == b'x' && matches!(bytes[1], b'E' | b'F' | b'G') && bytes[2] == b'A' {
+            return true;
+        }
+        if bytes[0] == b'w' && matches!(bytes[1], b'A' | b'C') && bytes[2] == b'A' {
+            return true;
+        }
+        if bytes[0] == b'v' && bytes[1] >= b'A' && bytes[1] <= b'K' && bytes[2] == b'A' {
+            return true;
+        }
+        if bytes[0] == b'u' && matches!(bytes[1], b'D' | b'E') && bytes[2] == b'A' {
+            return true;
+        }
+        if bytes[0] == b't' && bytes[1] == b'D' && bytes[2] >= b'A' && bytes[2] <= b'C' {
+            return true;
+        }
+        if bytes[0] == b't' && bytes[1] == b'F' && bytes[2] == b'C' {
+            return true;
+        }
         return false;
     }
     // Named alarms
@@ -390,25 +507,37 @@ pub fn is_kit(item: &str) -> bool {
 pub fn parse_st_packet(data: &str) -> Vec<CheckItem> {
     let parts: Vec<&str> = data.split(',').collect();
     let mut results = Vec::new();
-    if parts.len() < 8 { return results; }
+    if parts.len() < 8 {
+        return results;
+    }
 
     let mut i = 7;
     while i + 1 < parts.len() {
         let item = parts[i].trim();
         let value = parts[i + 1].trim();
-        if item.is_empty() { i += 2; continue; }
+        if item.is_empty() {
+            i += 2;
+            continue;
+        }
 
         // Skip items with single char values N, C, -, /
         if value.len() == 1 {
             match value.as_bytes()[0] {
-                b'N' | b'C' | b'-' | b'/' => { i += 2; continue; }
+                b'N' | b'C' | b'-' | b'/' => {
+                    i += 2;
+                    continue;
+                }
                 _ => {}
             }
         }
 
         if is_kit(item) {
             let is_abnormal = !(value == "0" || value == "0:0:0:0:0:0:0:0:0:0");
-            let alarm_text = if is_abnormal { get_alarm(item, value) } else { String::new() };
+            let alarm_text = if is_abnormal {
+                get_alarm(item, value)
+            } else {
+                String::new()
+            };
             results.push(CheckItem {
                 item: item.to_string(),
                 value: value.to_string(),
@@ -431,15 +560,29 @@ pub fn generate_simulated_data(stations: &[StationConfig]) -> MonitorData {
 
     // Standard alarm items to simulate
     let alarm_items: &[(&str, &str)] = &[
-        ("aCF", "0"), ("aDOOR", "0"), ("aLID", "0"), ("aLEVEL", "0"),
-        ("aSWITCH", "ON"), ("aSWITCHA", "0"), ("yC", "0"), ("yD", "0"),
-        ("wA", "25.0"), ("xB", "220"), ("tA", "0"), ("sA", "0"),
-        ("rA", "0"), ("qA", "0"), ("vA", "0"), ("uD", "0"),
+        ("aCF", "0"),
+        ("aDOOR", "0"),
+        ("aLID", "0"),
+        ("aLEVEL", "0"),
+        ("aSWITCH", "ON"),
+        ("aSWITCHA", "0"),
+        ("yC", "0"),
+        ("yD", "0"),
+        ("wA", "25.0"),
+        ("xB", "220"),
+        ("tA", "0"),
+        ("sA", "0"),
+        ("rA", "0"),
+        ("qA", "0"),
+        ("vA", "0"),
+        ("uD", "0"),
     ];
 
     for st in stations {
         let is_online: bool = rng.gen_range(0.0..1.0) > 0.15;
-        if is_online { online_count += 1; }
+        if is_online {
+            online_count += 1;
+        }
 
         let mut alarms = Vec::new();
         if is_online {
@@ -456,12 +599,16 @@ pub fn generate_simulated_data(stations: &[StationConfig]) -> MonitorData {
         }
 
         let now = Local::now();
-        let min_time = (now - Duration::minutes(rng.gen_range(1..10))).format("%Y-%m-%d %H:%M:%S").to_string();
+        let min_time = (now - Duration::minutes(rng.gen_range(1..10)))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
         let max_time = now.format("%Y-%m-%d %H:%M:%S").to_string();
 
         // Simulate last arrival time: some recent, some older (0~120 min ago)
         let arrival_gap_min: i64 = rng.gen_range(0..=120);
-        let last_arrival = (now - Duration::minutes(arrival_gap_min)).format("%Y-%m-%d %H:%M:%S").to_string();
+        let last_arrival = (now - Duration::minutes(arrival_gap_min))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
 
         // Simulate arrival rate: online stations 85~100%, offline 0~50%
         let arrival_rate = if is_online {
@@ -513,7 +660,10 @@ pub fn generate_simulated_data(stations: &[StationConfig]) -> MonitorData {
 }
 
 /// Generate simulated chart data for alarm trends
-pub fn generate_alarm_trend(stations: &[StationConfig], hours: i64) -> Vec<(DateTime<Local>, HashMap<String, usize>)> {
+pub fn generate_alarm_trend(
+    stations: &[StationConfig],
+    hours: i64,
+) -> Vec<(DateTime<Local>, HashMap<String, usize>)> {
     let mut rng = rand::thread_rng();
     let now = Local::now();
     let mut data = Vec::new();
@@ -537,22 +687,27 @@ pub fn generate_alarm_trend(stations: &[StationConfig], hours: i64) -> Vec<(Date
 }
 
 /// Generate simulated chart data for a specific item value
-pub fn generate_value_trend(_stations: &[StationConfig], _station_id: &str, item: &str, hours: i64) -> Vec<(DateTime<Local>, f64)> {
+pub fn generate_value_trend(
+    _stations: &[StationConfig],
+    _station_id: &str,
+    item: &str,
+    hours: i64,
+) -> Vec<(DateTime<Local>, f64)> {
     let mut rng = rand::thread_rng();
     let now = Local::now();
     let mut data = Vec::new();
 
     // Base value depends on item type
     let (base, amp) = match item.chars().next() {
-        Some('w') => (25.0, 10.0),       // temperature
+        Some('w') => (25.0, 10.0), // temperature
         Some('x') if item.len() > 1 => {
             match item.as_bytes()[1] {
-                b'B' => (220.0, 30.0),    // voltage
-                b'F' => (100.0, 50.0),    // current
+                b'B' => (220.0, 30.0), // voltage
+                b'F' => (100.0, 50.0), // current
                 _ => (50.0, 20.0),
             }
         }
-        Some('u') => (3.0, 1.5),         // wind speed
+        Some('u') => (3.0, 1.5), // wind speed
         _ => (50.0, 25.0),
     };
 
