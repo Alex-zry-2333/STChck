@@ -10,6 +10,7 @@ path = "src/main.rs"
 [[bin]]
 name = "license-gen"
 path = "tools/license-gen.rs"
+required-features = ["license-check"]
 
 [features]
 default = []

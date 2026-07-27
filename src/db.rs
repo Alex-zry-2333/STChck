@@ -866,7 +866,7 @@ impl DbService {
                 .unwrap()
                 .with_nanosecond(0)
                 .unwrap();
-            let prev_minute = now_minute - chrono::Duration::minutes(1);
+            let _prev_minute = now_minute - chrono::Duration::minutes(1);
 
             let mut seen: HashSet<(String, String)> = HashSet::new();
             let mut devices: Vec<DeviceStatusInfo> = Vec::new();

@@ -217,6 +217,7 @@ async fn main() {
     // ============================================================
     // Runtime license reminder (degraded mode)
     // ============================================================
+    #[cfg(feature = "license-check")]
     if license_state.expired || license_state.invalid {
         let reminder_interval = license_state
             .license_info
