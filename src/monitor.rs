@@ -585,6 +585,7 @@ pub fn is_kit(item: &str) -> bool {
         }
         return false;
     }
+    false
 }
 
 /// Parse ST packet - port of the parsing loop from tm.c
