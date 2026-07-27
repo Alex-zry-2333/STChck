@@ -218,41 +218,43 @@ async fn main() {
     // Runtime license reminder (degraded mode)
     // ============================================================
     #[cfg(feature = "license-check")]
-    if license_state.expired || license_state.invalid {
-        let reminder_interval = license_state
-            .license_info
-            .as_ref()
-            .map(|l| l.features.reminder_interval_hours)
-            .unwrap_or(24);
+    {
+        if license_state.expired || license_state.invalid {
+            let reminder_interval = license_state
+                .license_info
+                .as_ref()
+                .map(|l| l.features.reminder_interval_hours)
+                .unwrap_or(24);
 
-        tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(tokio::time::Duration::from_secs(reminder_interval * 3600));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            interval.tick().await; // skip first immediate tick
+            tokio::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(tokio::time::Duration::from_secs(reminder_interval * 3600));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                interval.tick().await; // skip first immediate tick
 
-            loop {
-                interval.tick().await;
-                if license::license::is_expired() {
-                    tracing::warn!(
-                        "╔════════════════════════════════════════════════════════════╗"
-                    );
-                    tracing::warn!("║  ⏰ LICENSE REMINDER: Your license has EXPIRED.           ║");
-                    tracing::warn!("║  Please contact support to renew.                        ║");
-                    tracing::warn!(
-                        "╚════════════════════════════════════════════════════════════╝"
-                    );
-                } else if license::license::is_invalid() {
-                    tracing::warn!(
-                        "╔════════════════════════════════════════════════════════════╗"
-                    );
-                    tracing::warn!("║  ⏰ LICENSE REMINDER: No valid license file found.        ║");
-                    tracing::warn!(
-                        "╚════════════════════════════════════════════════════════════╝"
-                    );
+                loop {
+                    interval.tick().await;
+                    if license::license::is_expired() {
+                        tracing::warn!(
+                            "╔════════════════════════════════════════════════════════════╗"
+                        );
+                        tracing::warn!("║  ⏰ LICENSE REMINDER: Your license has EXPIRED.           ║");
+                        tracing::warn!("║  Please contact support to renew.                        ║");
+                        tracing::warn!(
+                            "╚════════════════════════════════════════════════════════════╝"
+                        );
+                    } else if license::license::is_invalid() {
+                        tracing::warn!(
+                            "╔════════════════════════════════════════════════════════════╗"
+                        );
+                        tracing::warn!("║  ⏰ LICENSE REMINDER: No valid license file found.        ║");
+                        tracing::warn!(
+                            "╚════════════════════════════════════════════════════════════╝"
+                        );
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 
     // Background refresh for monitor data; start immediately so HTTP comes up fast
