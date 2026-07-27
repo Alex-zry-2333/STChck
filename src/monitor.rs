@@ -847,7 +847,7 @@ pub fn generate_forecast_detail(
     }
 }
 
-fn calculate_risk_score(status: &StationStatus) -> f64 {
+pub fn calculate_risk_score(status: &StationStatus) -> f64 {
     let mut score = if status.online { 0.1 } else { 0.7 };
     score += (status.alarm_count as f64) * 0.12;
     if status.arrival_rate_24h < 95.0 {
@@ -866,7 +866,7 @@ fn calculate_risk_score(status: &StationStatus) -> f64 {
     score.clamp(0.0, 1.0)
 }
 
-fn risk_level(score: f64) -> &'static str {
+pub fn risk_level(score: f64) -> &'static str {
     if score >= 0.65 {
         "高"
     } else if score >= 0.35 {
