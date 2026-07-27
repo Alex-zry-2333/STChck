@@ -370,7 +370,7 @@ async fn main() {
             async move { auth_middleware(req, next, state).await }
         }))
         .layer(cors_layer)
-        .with_state(state);
+        .with_state(state.clone());
 
     cleanup_previous_instances();
 
