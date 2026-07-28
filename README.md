@@ -170,6 +170,73 @@ http://localhost:8080/forecast # AI 预报页面
 | `GET /api/forecast`                                   | -    | 设备运行状态 AI 预报列表      |
 | `GET /api/forecast/{id}`                              | -    | 单站点 AI 预报详情            |
 
+### AI 预报交互时序
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 用户
+    participant Browser as 前端预报页面
+    participant Router as Axum 路由层
+    participant State as 全局应用状态
+    participant Monitor as 核心监测服务
+
+    Note over User, Monitor: 场景一：获取预报概览列表
+
+    User->>Browser: 1. 访问 /forecast 页面
+    activate Browser
+    Browser->>Browser: 2. 触发页面初始化，显示加载骨架屏
+    Browser->>Router: 3. 发起 GET /forecast 请求
+    activate Router
+    Router->>State: 4. 提取全局监测数据 (MonitorData.stations)
+    activate State
+    State->>Monitor: 5. 调用概览生成函数 (stations)
+    activate Monitor
+    Monitor-->>State: 6. 返回预报概览集合 (Vec<ForecastOverview>)
+    deactivate Monitor
+    State-->>Router: 7. 封装为 JSON 响应
+    deactivate State
+    Router-->>Browser: 8. 返回 200 OK 及预报概览列表
+    deactivate Router
+    Browser->>Browser: 9. 隐藏骨架屏，渲染风险预警卡片列表
+    deactivate Browser
+
+    Note over User, Monitor: 场景二：查看单站点预报详情
+
+    User->>Browser: 10. 点击某张卡片的 "查看详情"
+    activate Browser
+    Browser->>Browser: 11. 侧边面板打开，显示详情加载状态
+    Browser->>Router: 12. 发起 GET /api/forecast/{id} 请求
+    activate Router
+    Router->>State: 13. 根据 ID 检索站点实时状态 (StationStatus)
+    activate State
+    alt 站点状态存在
+        State->>Monitor: 14. 调用详情生成函数 (status, station_meta)
+        activate Monitor
+        Monitor-->>State: 15. 返回预报详情对象 (ForecastDetail)
+        deactivate Monitor
+        State-->>Router: 16. 封装为 JSON 响应
+        Router-->>Browser: 17. 返回 200 OK 及预报详情
+    else 站点状态未找到
+        State-->>Router: 16. 返回 404 Not Found
+        Router-->>Browser: 17. 返回错误信息
+    end
+    deactivate State
+    deactivate Router
+
+    alt 请求成功
+        Browser->>Browser: 18. 在侧边面板中渲染详细预报数据
+    else 请求失败
+        Browser->>Browser: 18. 在侧边面板中展示错误提示或重试按钮
+    end
+
+    Note over User, Monitor: 场景三：关闭详情面板
+
+    User->>Browser: 19. 点击侧边面板的 "关闭" 按钮或遮罩层
+    Browser->>Browser: 20. 播放面板关闭动画，重置详情状态
+    deactivate Browser
+```
+
 ### API 示例
 
 ```bash
