@@ -10,6 +10,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::MySqlPool;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use tracing;
 
 fn parse_dms_coord(s: &str) -> f64 {
     let s = s.trim();
