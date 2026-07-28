@@ -16,7 +16,6 @@ pub mod license {
     use std::collections::HashSet;
     use std::fs;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
     use tracing;
 
     /// Global flag: true if license has expired (but we keep running in degraded mode)
@@ -167,6 +166,7 @@ pub mod license {
             return LicenseState {
                 valid: false,
                 expired: true,
+                invalid: false,
                 hardware_mismatch: !hw_result,
                 message: msg,
                 license_info: Some(license),
