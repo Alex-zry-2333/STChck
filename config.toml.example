@@ -179,3 +179,10 @@ vendor = "无锡"
 id = "57914"
 name = "贵州花溪"
 vendor = "无锡"
+
+[auth]
+enabled = false
+username = "admin"
+password = "admin"
+allowed_origins = []
+rate_limit_per_second = 15

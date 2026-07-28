@@ -82,6 +82,22 @@ body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system,
 .chart-card:hover { box-shadow: var(--shadow-hover); }
 .chart-card .chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }
 .chart-card .chart-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.forecast-cta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  background: linear-gradient(135deg, #2858d8, #1fb8f1);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 22px;
+  margin-bottom: 24px;
+  box-shadow: 0 20px 50px rgba(14, 75, 167, 0.15);
+}
+.forecast-cta .cta-title { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
+.forecast-cta .cta-text { max-width: 560px; line-height: 1.7; color: rgba(255,255,255,0.92); }
+.forecast-cta button { background: #fff; color: #1f4db2; border: none; border-radius: 14px; padding: 12px 20px; font-weight: 700; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.forecast-cta button:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(30, 81, 161, 0.18); }
 .chart-card .chart-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .chart-card .chart-controls select, .chart-card .chart-controls input {
   background: var(--bg);
@@ -369,7 +385,7 @@ body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system,
   <div class="nav">
     <a href="/" class="active">站点状态</a>
     <a href="/overview">综合看板</a>
-    <a href="/map">地图监控</a>
+    <a href="/map">地图监控</a>    <a href="/forecast">AI预报</a>
   </div>
   <div class="status-bar" id="statusBar">
     <div class="status-item">
@@ -414,6 +430,14 @@ body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system,
       </div>
     </div>
     <div id="alarmChart" class="chart-box"></div>
+  </div>
+
+  <div class="forecast-cta">
+    <div>
+      <div class="cta-title">智能 AI 预报：先行识别站点风险</div>
+      <div class="cta-text">本功能融合站点在线率、数据到达率和告警态势，为气象站运维人员提供更具决策价值的优先巡检建议。</div>
+    </div>
+    <button onclick="window.location.href='/forecast'">立即查看</button>
   </div>
 
   <div class="filter-bar">

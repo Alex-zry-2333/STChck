@@ -1,0 +1,171 @@
+name: CI/CD - Un-tested to Tested
+
+on:
+  push:
+    branches:
+      - 'hw/un-tested-*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-promote:
+    name: Run Tests & Promote to Tested
+    runs-on: ubuntu-latest
+
+    steps:
+      # ============================================
+      # Step 1: Checkout code
+      # ============================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ============================================
+      # Step 2: Setup Rust toolchain
+      # ============================================
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # ============================================
+      # Step 3: Cache dependencies
+      # ============================================
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # ============================================
+      # Step 4: Check code formatting
+      # ============================================
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # ============================================
+      # Step 5: Run Clippy (lint)
+      # ============================================
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true
+
+      # ============================================
+      # Step 6: Build project
+      # ============================================
+      - name: Build
+        run: cargo build --verbose
+
+      # ============================================
+      # Step 7: Run tests
+      # ============================================
+      - name: Run tests
+        id: run_tests
+        run: cargo test --verbose
+
+      # ============================================
+      # Step 8: Promote to tested branch (only if tests pass)
+      # ============================================
+      - name: Promote to hw/tested branch
+        if: steps.run_tests.outcome == 'success'
+        run: |
+          set -euo pipefail
+
+          echo "🧪 Tests passed! Promoting to hw/tested branch..."
+
+          # Configure git
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+
+          # Get current branch name
+          SOURCE_BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "Source branch: $SOURCE_BRANCH"
+          echo "Commit SHA: ${{ github.sha }}"
+
+          # Fetch the tested branch if it exists
+          echo "🔍 Checking if hw/tested branch exists on remote..."
+          if git fetch origin hw/tested 2>/dev/null; then
+            echo "✅ hw/tested branch exists on remote"
+            BRANCH_EXISTS=true
+          else
+            echo "🆕 hw/tested branch does not exist yet on remote"
+            BRANCH_EXISTS=false
+          fi
+
+          # Create or checkout tested branch
+          if [[ "$BRANCH_EXISTS" == "true" ]]; then
+            echo "🔀 Checking out existing hw/tested branch..."
+            git checkout -B hw/tested origin/hw/tested
+
+            echo "🔀 Merging current commit into hw/tested..."
+            git merge --no-ff "${{ github.sha }}" -m "✅ Auto-promote: Tests passed for ${SOURCE_BRANCH}
+
+          Source: ${SOURCE_BRANCH}
+          Commit: ${{ github.sha }}
+          Triggered by: ${{ github.actor }}
+          Tests: PASSED"
+          else
+            echo "🆕 Creating hw/tested branch from current commit..."
+            git checkout -b hw/tested
+          fi
+
+          # Push to hw/tested with retry logic
+          echo "🚀 Pushing to hw/tested branch..."
+          MAX_RETRIES=3
+          RETRY_DELAY=5
+          for ((i=1; i<=MAX_RETRIES; i++)); do
+            if git push origin hw/tested; then
+              echo "✅ Successfully promoted to hw/tested branch!"
+              exit 0
+            else
+              echo "⚠️ Push attempt $i/$MAX_RETRIES failed"
+              if [[ $i -lt $MAX_RETRIES ]]; then
+                echo "⏳ Waiting ${RETRY_DELAY}s before retry..."
+                sleep $RETRY_DELAY
+                echo "🔄 Fetching latest remote state and retrying..."
+                git fetch origin hw/tested || true
+              fi
+            fi
+          done
+
+          echo "❌ Failed to push to hw/tested after $MAX_RETRIES attempts"
+          exit 1
+
+      # ============================================
+      # Step 9: Notify on test failure
+      # ============================================
+      - name: Notify on test failure
+        if: failure() && steps.run_tests.outcome == 'failure'
+        run: |
+          echo "❌ Tests FAILED for branch ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "The code will NOT be promoted to hw/tested branch."
+          exit 1
+
+      # ============================================
+      # Step 10: Notify on promotion failure (tests passed but push failed)
+      # ============================================
+      - name: Notify on promotion failure
+        if: failure() && steps.run_tests.outcome == 'success'
+        run: |
+          echo "❌ Tests PASSED but promotion to hw/tested FAILED"
+          echo "Commit: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo ""
+          echo "🔧 Common causes:"
+          echo "   1. GITHUB_TOKEN lacks 'contents: write' permission"
+          echo "   2. Branch protection rules blocking push"
+          echo "   3. Repository settings → Actions → Workflow permissions"
+          exit 1

@@ -169,3 +169,31 @@ pub struct StationDevicesResponse {
     pub station_name: String,
     pub devices: Vec<DeviceStatusInfo>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForecastOverview {
+    pub station_id: String,
+    pub station_name: String,
+    pub risk_level: String,
+    pub risk_score: f64,
+    pub summary: String,
+    pub highlight: String,
+    pub advice: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForecastDetail {
+    pub station_id: String,
+    pub station_name: String,
+    pub risk_level: String,
+    pub risk_score: f64,
+    pub summary: String,
+    pub highlight: String,
+    pub predicted_state: String,
+    pub risk_factors: Vec<String>,
+    pub key_triggers: Vec<String>,
+    pub maintenance_advice: Vec<String>,
+    pub confidence: String,
+    pub generated_at: String,
+}

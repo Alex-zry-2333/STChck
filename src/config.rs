@@ -8,7 +8,31 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub cloud_database: DatabaseConfig,
     pub monitor: MonitorConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
     pub stations: Vec<StationConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    pub enabled: bool,
+    pub username: String,
+    pub password: String,
+    pub allowed_origins: Vec<String>,
+    pub rate_limit_per_second: u64,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            username: "admin".to_string(),
+            password: "admin".to_string(),
+            allowed_origins: Vec::new(),
+            rate_limit_per_second: 20,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,7 +70,8 @@ impl Config {
             fs::read_to_string(path).expect("Failed to read config.toml")
         } else {
             // Try next to the binary
-            let exe_path = std::env::current_exe().ok()
+            let exe_path = std::env::current_exe()
+                .ok()
                 .and_then(|p| p.parent().map(|d| d.join("config.toml")))
                 .filter(|p| p.exists());
             if let Some(p) = exe_path {
