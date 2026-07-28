@@ -145,21 +145,26 @@ pub fn get_alarm(item: &str, value: &str) -> String {
     // Two-char kit items (tA-G except D, sA-H, qA-E, wA-B, xA-C)
     if item.len() == 2 {
         let bytes = item.as_bytes();
-        if bytes[0] == b't' && bytes[1] >= b'A' && bytes[1] <= b'G' && bytes[1] != b'D' {
+        if bytes[0] == b't' && bytes[1] >= b'A' && bytes[1] <= b'G' {
             let p = match bytes[1] {
                 b'A' => "设备到智能集成处理器通信状态",
                 b'B' => "总线状态",
                 b'C' => "串口通信状态",
+                b'D' => "网口通信状态",
                 b'E' => "鱼眼相机网口通信状态",
                 b'F' => "普通相机1网口通信状态",
                 b'G' => "普通相机2网口通信状态",
                 _ => item,
             };
-            let s = match value.chars().next() {
-                Some('0') => "正常",
-                Some('1') => "故障",
-                Some('2') => "未启用",
-                _ => value,
+            let s = if bytes[1] == b'D' {
+                value.chars().next().map(generic_suffix).unwrap_or("")
+            } else {
+                match value.chars().next() {
+                    Some('0') => "正常",
+                    Some('1') => "故障",
+                    Some('2') => "未启用",
+                    _ => value,
+                }
             };
             return format!("{}:{}", p, s);
         }
