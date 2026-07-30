@@ -389,6 +389,54 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-text { margin-top: 16px; color: rgba(255,255,255,0.7); font-size: 14px; }
 
+/* ========== 实时状态指示器 ========== */
+.live-indicator {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 14px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 20px;
+  font-size: 11px; color: rgba(255,255,255,0.85);
+}
+.live-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(76,175,80,0.8);
+  animation: livePulse 1.6s ease-in-out infinite;
+}
+.live-indicator.reconnecting .live-dot {
+  background: var(--orange);
+  box-shadow: 0 0 8px rgba(255,152,0,0.8);
+}
+@keyframes livePulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.55; }
+}
+.live-time { color: rgba(255,255,255,0.55); font-family: monospace; }
+
+/* ========== 数字变化闪烁 ========== */
+@keyframes statFlash {
+  0% { background: rgba(255,255,255,0.35); transform: scale(1.08); }
+  100% { background: rgba(255,255,255,0.1); transform: scale(1); }
+}
+.status-item.flash { animation: statFlash 0.9s ease-out; }
+
+/* ========== 列表项状态变化高亮 ========== */
+@keyframes listFlash {
+  0% { background: rgba(33,150,243,0.28); }
+  100% { background: transparent; }
+}
+.map-station-item.changed { animation: listFlash 1.2s ease-out; }
+
+/* ========== 图例报警点脉冲 ========== */
+.legend-dot.alarm { animation: legendAlarmPulse 1.6s ease-in-out infinite; }
+@keyframes legendAlarmPulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(244,67,54,0.4); transform: scale(1); }
+  50% { box-shadow: 0 0 12px rgba(244,67,54,0.9); transform: scale(1.25); }
+}
+
+/* ========== 底图暗化，突出标记 ========== */
+.base-tile-layer { filter: brightness(0.88) saturate(0.85); }
+
 @media (max-width: 768px) {
   .side-panel { width: 280px; }
   .drawer { width: 100%; max-width: 100vw; }
@@ -416,15 +464,20 @@ body {
     <a href="/map" class="active">地图监控</a>    <a href="/forecast">AI预报</a>
   </div>
   <div class="status-bar" id="statusBar">
-    <div class="status-item">
+    <div class="live-indicator" id="liveIndicator">
+      <span class="live-dot"></span>
+      <span id="liveText">实时更新中</span>
+      <span class="live-time" id="liveTime"></span>
+    </div>
+    <div class="status-item" id="totalItem">
       <div class="num" id="totalCount">0</div>
       <div class="label">总站数</div>
     </div>
-    <div class="status-item">
+    <div class="status-item" id="onlineItem">
       <div class="num" id="onlineCount" style="color:var(--green)">0</div>
       <div class="label">在线</div>
     </div>
-    <div class="status-item">
+    <div class="status-item" id="alarmItem">
       <div class="num" id="alarmCount" style="color:var(--red)">0</div>
       <div class="label">报警</div>
     </div>
@@ -534,7 +587,7 @@ function initMap() {
   map = new ol.Map({
     target: 'mapContainer',
     layers: [
-      new ol.layer.Tile({ source: baseSource })
+      new ol.layer.Tile({ source: baseSource, className: 'base-tile-layer' })
     ],
     view: new ol.View({
       center: ol.proj.fromLonLat([104.5, 35.5]),
@@ -622,6 +675,11 @@ async function loadMapStations() {
     // 自动适应视野
     fitMapToStations();
 
+    // 启动实时更新与报警脉冲动画
+    updateLiveTime();
+    startLiveUpdates();
+    startPulseLoop();
+
   } catch (e) {
     console.error('Load map stations error:', e);
     document.querySelector('.loading-text').textContent = '数据加载失败，请刷新重试';
@@ -677,12 +735,31 @@ function renderStationMarkers() {
   });
 }
 
+// 脉冲动画相位（0~1 循环），由 pulseLoop 驱动
+let pulsePhase = 0;
+
 function createMarkerStyle(st, isSelected) {
-  const color = st.alarm_count > 0 ? '#f44336' : (st.online ? '#4caf50' : '#90a4ae');
+  const isAlarm = st.alarm_count > 0;
+  const color = isAlarm ? '#f44336' : (st.online ? '#4caf50' : '#90a4ae');
   const radius = isSelected ? 14 : 10;
   const strokeWidth = isSelected ? 3 : 2;
 
-  return new ol.style.Style({
+  const styles = [];
+
+  // 报警站点：外圈扩散涟漪光环
+  if (isAlarm) {
+    const rippleRadius = radius + 3 + pulsePhase * 15;
+    const rippleOpacity = Math.max(0, 0.55 * (1 - pulsePhase));
+    styles.push(new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: rippleRadius,
+        fill: new ol.style.Fill({ color: 'rgba(244,67,54,' + rippleOpacity.toFixed(3) + ')' }),
+        stroke: new ol.style.Stroke({ color: 'rgba(244,67,54,' + (rippleOpacity * 0.9).toFixed(3) + ')', width: 1.5 })
+      })
+    }));
+  }
+
+  styles.push(new ol.style.Style({
     image: new ol.style.Circle({
       radius: radius,
       fill: new ol.style.Fill({ color: color }),
@@ -698,7 +775,26 @@ function createMarkerStyle(st, isSelected) {
       stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0.6)', width: 3 }),
       offsetY: -radius - 8
     })
-  });
+  }));
+
+  return styles;
+}
+
+// 脉冲动画循环：≤15fps，仅在有报警站点且页面可见时运行
+let pulseTimer = null;
+function startPulseLoop() {
+  if (pulseTimer) return;
+  let lastTick = 0;
+  pulseTimer = setInterval(() => {
+    if (document.hidden || !stationLayer) return;
+    const hasAlarm = allStations.some(s => s.alarm_count > 0);
+    if (!hasAlarm) return;
+    const now = Date.now();
+    if (now - lastTick < 66) return;
+    lastTick = now;
+    pulsePhase = (now % 1600) / 1600;
+    stationLayer.changed();
+  }, 66);
 }
 
 // ===================== Popup =====================
@@ -743,13 +839,15 @@ function popupOpenDrawer() {
 
 // ===================== 选中交互 =====================
 function selectStation(id) {
+  // 清除旧的直接样式覆盖，统一交给图层样式函数渲染（支持动画）
   if (selectedFeature) {
-    selectedFeature.setStyle(createMarkerStyle(selectedFeature.get('station'), false));
+    selectedFeature.setStyle(null);
   }
   selectedFeature = stationLayer.getSource().getFeatureById(id);
   if (selectedFeature) {
-    selectedFeature.setStyle(createMarkerStyle(selectedFeature.get('station'), true));
+    selectedFeature.setStyle(null);
   }
+  if (stationLayer) stationLayer.changed();
 
   // 高亮列表项
   document.querySelectorAll('.map-station-item').forEach(el => el.classList.remove('active'));
@@ -762,8 +860,9 @@ function selectStation(id) {
 
 function clearSelection() {
   if (selectedFeature) {
-    selectedFeature.setStyle(createMarkerStyle(selectedFeature.get('station'), false));
+    selectedFeature.setStyle(null);
     selectedFeature = null;
+    if (stationLayer) stationLayer.changed();
   }
   document.querySelectorAll('.map-station-item').forEach(el => el.classList.remove('active'));
 }
@@ -867,11 +966,146 @@ function onListItemClick(id) {
   }
 }
 
+// 数字滚动动画（count-up），变化时容器闪烁
+function animateNumber(el, containerEl, newVal) {
+  const oldVal = parseInt(el.textContent) || 0;
+  if (oldVal === newVal) return;
+  if (containerEl) {
+    containerEl.classList.remove('flash');
+    void containerEl.offsetWidth; // 重启动画
+    containerEl.classList.add('flash');
+  }
+  const start = performance.now();
+  const duration = 600;
+  function step(now) {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    el.textContent = Math.round(oldVal + (newVal - oldVal) * eased);
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
 function updateHeaderStats(summary) {
   if (!summary) return;
-  document.getElementById('totalCount').textContent = summary.total || 0;
-  document.getElementById('onlineCount').textContent = summary.online || 0;
-  document.getElementById('alarmCount').textContent = summary.alarms || 0;
+  animateNumber(document.getElementById('totalCount'), document.getElementById('totalItem'), summary.total || 0);
+  animateNumber(document.getElementById('onlineCount'), document.getElementById('onlineItem'), summary.online || 0);
+  animateNumber(document.getElementById('alarmCount'), document.getElementById('alarmItem'), summary.alarms || 0);
+}
+
+// ===================== 实时数据更新（SSE 优先，轮询兜底） =====================
+let eventSource = null;
+let pollTimer = null;
+
+function applyMonitorUpdate(statusData) {
+  if (!statusData || !statusData.stations) return;
+  const statusMap = {};
+  statusData.stations.forEach(s => { statusMap[s.id] = s; });
+
+  // 对比并合并状态，记录变化的站点
+  const changedIds = new Set();
+  allStations.forEach(st => {
+    const ns = statusMap[st.id];
+    if (!ns) return;
+    const newOnline = !!ns.online;
+    const newAlarmCount = ns.alarm_count || 0;
+    if (newOnline !== st.online || newAlarmCount !== st.alarm_count) {
+      changedIds.add(st.id);
+    }
+    st.online = newOnline;
+    st.alarm_count = newAlarmCount;
+    st.alarms = ns.alarms || [];
+    st.arrival_rate_24h = ns.arrival_rate_24h || 0;
+    st.records = ns.records || 0;
+    st.last_arrival_time = ns.last_arrival_time || '';
+  });
+
+  // 同步地图标记
+  if (stationLayer) {
+    const source = stationLayer.getSource();
+    changedIds.forEach(id => {
+      const f = source.getFeatureById(id);
+      const st = allStations.find(s => s.id === id);
+      if (f && st) f.set('station', st);
+    });
+    if (changedIds.size > 0) stationLayer.changed();
+  }
+
+  // 刷新列表并保持滚动位置，变化行闪烁提示
+  const listEl = document.getElementById('stationList');
+  const scrollTop = listEl.scrollTop;
+  filterStationList();
+  listEl.scrollTop = scrollTop;
+  changedIds.forEach(id => {
+    const item = document.querySelector('.map-station-item[data-id="' + id + '"]');
+    if (item) item.classList.add('changed');
+  });
+  if (changedIds.size > 0) {
+    setTimeout(() => {
+      document.querySelectorAll('.map-station-item.changed').forEach(el => el.classList.remove('changed'));
+    }, 1300);
+  }
+
+  // 正在浏览的 Popup 原位刷新内容，不打断用户操作
+  if (currentPopupStation && popupOverlay.getPosition()) {
+    const st = allStations.find(s => s.id === currentPopupStation.id);
+    if (st) showPopup(st, popupOverlay.getPosition());
+  }
+
+  updateHeaderStats(statusData.summary);
+  updateLiveTime();
+}
+
+function updateLiveTime() {
+  const now = new Date();
+  document.getElementById('liveTime').textContent = now.toTimeString().substring(0, 8);
+}
+
+function setLiveStatus(ok) {
+  document.getElementById('liveIndicator').classList.toggle('reconnecting', !ok);
+  document.getElementById('liveText').textContent = ok ? '实时更新中' : '重连中·轮询';
+}
+
+function startLiveUpdates() {
+  if (window.EventSource) {
+    eventSource = new EventSource('/api/events');
+    eventSource.onmessage = function(e) {
+      try {
+        const data = JSON.parse(e.data);
+        if (data && data.stations) {
+          setLiveStatus(true);
+          applyMonitorUpdate(data);
+        }
+      } catch (err) { /* 忽略 keep-alive 等非 JSON 帧 */ }
+    };
+    eventSource.onopen = function() {
+      setLiveStatus(true);
+      stopPolling();
+    };
+    eventSource.onerror = function() {
+      setLiveStatus(false);
+      startPolling(); // SSE 断连期间降级轮询，EventSource 自身会自动重连
+    };
+  } else {
+    setLiveStatus(false);
+    startPolling();
+  }
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const resp = await fetch('/api/status');
+      const data = await resp.json();
+      applyMonitorUpdate(data);
+    } catch (e) { /* 网络异常时保持现状 */ }
+  }, 15000);
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
 // ===================== 抽屉（复用 dashboard 逻辑） =====================
