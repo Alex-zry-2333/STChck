@@ -576,85 +576,61 @@ impl DbService {
         let start = std::time::Instant::now();
         let pool = self.pool.as_ref().unwrap();
         let station_ids: Vec<String> = stations.iter().map(|s| s.id.clone()).collect();
-        let ids_placeholders = station_ids
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
 
-        // Main query - keep as grouped queries but split basic aggregates
-        // and distinct device count. On the 15 GB table this is much faster
-        // than per-station queries because each query scans the small recent
-        // window only once.
-        let basic_sql = format!(
-            "SELECT station_num, COUNT(*), \
+        // 单站聚合查询 + 连接池并发执行。
+        // 生产表 3400 万行、索引 (station_num, device_type, device_nid, data_time)：
+        // IN-list 分组查询需对全部站点做索引扫描（实测 15~44s/次，多段查询累计数分钟）；
+        // 单站查询约 1s，配合连接池并发可将总耗时压缩到 10s 级。
+        let agg_sql = "SELECT COUNT(*), \
              COUNT(IF(data_time > (NOW() - INTERVAL 6 MINUTE), 1, NULL)), \
-             MIN(data_time), MAX(data_time) \
+             MIN(data_time), MAX(data_time), \
+             COUNT(DISTINCT device_type, device_nid) \
              FROM data_st \
-             WHERE receive_time > (NOW() - INTERVAL ? MINUTE) \
-             AND station_num IN ({}) \
-             GROUP BY station_num ORDER BY station_num",
-            ids_placeholders
+             WHERE station_num = ? AND data_time > (NOW() - INTERVAL ? MINUTE)";
+
+        type AggRow = (
+            i64,
+            Option<i64>,
+            Option<chrono::NaiveDateTime>,
+            Option<chrono::NaiveDateTime>,
+            i64,
         );
 
-        let mut basic_query = sqlx::query_as::<
-            _,
-            (
-                String,
-                i64,
-                Option<i64>,
-                Option<chrono::NaiveDateTime>,
-                Option<chrono::NaiveDateTime>,
-            ),
-        >(&basic_sql);
-        basic_query = basic_query.bind(check_interval_minutes);
+        let mut join_set: tokio::task::JoinSet<(String, Result<AggRow, sqlx::Error>)> =
+            tokio::task::JoinSet::new();
         for id in &station_ids {
-            basic_query = basic_query.bind(id);
+            let pool = pool.clone();
+            let id = id.clone();
+            join_set.spawn(async move {
+                let result = sqlx::query_as::<_, AggRow>(agg_sql)
+                    .bind(&id)
+                    .bind(check_interval_minutes)
+                    .fetch_one(&pool)
+                    .await;
+                (id, result)
+            });
         }
-        let basic_rows = match basic_query.fetch_all(pool).await {
-            Ok(rows) => rows,
-            Err(e) => {
-                tracing::error!("主聚合查询失败: {}", e);
-                return crate::monitor::generate_simulated_data(stations);
-            }
-        };
 
-        let device_sql = format!(
-            "SELECT station_num, COUNT(DISTINCT CONCAT(device_type, device_nid)) \
-             FROM data_st \
-             WHERE receive_time > (NOW() - INTERVAL ? MINUTE) \
-             AND station_num IN ({}) \
-             GROUP BY station_num ORDER BY station_num",
-            ids_placeholders
-        );
-
-        let mut device_query = sqlx::query_as::<_, (String, i64)>(&device_sql);
-        device_query = device_query.bind(check_interval_minutes);
-        for id in &station_ids {
-            device_query = device_query.bind(id);
-        }
-        let device_rows: std::collections::HashMap<String, i64> =
-            match device_query.fetch_all(pool).await {
-                Ok(rows) => rows.into_iter().collect(),
-                Err(e) => {
-                    tracing::warn!("设备数查询失败: {}", e);
-                    std::collections::HashMap::new()
+        let mut rows_map: HashMap<String, AggRow> = HashMap::new();
+        let mut agg_errors = 0usize;
+        while let Some(res) = join_set.join_next().await {
+            match res {
+                Ok((id, Ok(row))) => {
+                    rows_map.insert(id, row);
                 }
-            };
-
-        let mut rows_map: std::collections::HashMap<
-            String,
-            (
-                i64,
-                Option<i64>,
-                Option<chrono::NaiveDateTime>,
-                Option<chrono::NaiveDateTime>,
-                i64,
-            ),
-        > = HashMap::new();
-        for row in basic_rows {
-            let device_count = device_rows.get(&row.0).copied().unwrap_or(0);
-            rows_map.insert(row.0, (row.1, row.2, row.3, row.4, device_count));
+                Ok((id, Err(e))) => {
+                    agg_errors += 1;
+                    tracing::warn!("站点 {} 聚合查询失败: {}", id, e);
+                }
+                Err(e) => {
+                    agg_errors += 1;
+                    tracing::warn!("聚合查询任务异常: {}", e);
+                }
+            }
+        }
+        if !station_ids.is_empty() && agg_errors == station_ids.len() {
+            tracing::error!("全部站点聚合查询失败，降级为模拟数据");
+            return crate::monitor::generate_simulated_data(stations);
         }
 
         let mut stations_out = Vec::new();
@@ -662,32 +638,6 @@ impl DbService {
         let mut total_checked = 0usize;
         let mut online_count = 0usize;
         let mut total_records = 0i64;
-
-        // Query last arrival time and approximate arrival rate per station
-        // Avoid scanning the full 24h window on huge tables:
-        // 1) Get latest receive_time per station from index
-        // 2) Count recent records in a small window (30 min) as a proxy for activity
-        let arrival_sql = format!(
-            "SELECT station_num, \
-             MAX(receive_time) as last_arrival, \
-             COUNT(IF(receive_time > (NOW() - INTERVAL 30 MINUTE), 1, NULL)) as cnt_recent \
-             FROM data_st \
-             WHERE station_num IN ({}) \
-             AND receive_time > (NOW() - INTERVAL 2 HOUR) \
-             GROUP BY station_num",
-            ids_placeholders
-        );
-
-        let mut arrival_query =
-            sqlx::query_as::<_, (String, Option<chrono::NaiveDateTime>, i64)>(&arrival_sql);
-        for id in &station_ids {
-            arrival_query = arrival_query.bind(id);
-        }
-        let arrival_rows: std::collections::HashMap<String, (Option<chrono::NaiveDateTime>, i64)> =
-            match arrival_query.fetch_all(pool).await {
-                Ok(rows) => rows.into_iter().map(|r| (r.0, (r.1, r.2))).collect(),
-                Err(_) => std::collections::HashMap::new(),
-            };
 
         for (station_id, row) in rows_map {
             let r1 = row.0;
@@ -705,13 +655,16 @@ impl DbService {
             total_records += r1;
             let info = stations.iter().find(|s| s.id == station_id);
             let mut alarms = Vec::new();
-            let needs_st_check = r2 == r5 && r5 > 20;
+            // 高频到报数据（每设备每分钟数百条）下，旧的 r2==r5 判定恒为 false，
+            // 会导致真实模式全部站点显示离线；改为最近 6 分钟窗口内有数据即在线
+            let is_online = r2 > 0;
+            let needs_st_check = is_online;
 
             if needs_st_check && !min_time.is_empty() {
                 // Query ST packet for this station - port of sqlProST
                 let st_sql = "SELECT data FROM data_st \
                      WHERE station_num = ? AND data_time = ? \
-                     AND receive_time > (NOW() - INTERVAL 10 MINUTE) \
+                     AND data_time > (NOW() - INTERVAL 10 MINUTE) \
                      LIMIT 1";
 
                 if let Ok(st_row) = sqlx::query_scalar::<_, String>(&st_sql)
@@ -738,18 +691,14 @@ impl DbService {
                 online_count += 1;
             }
 
-            // Get last arrival time and recent arrival rate (30 min proxy)
-            let (last_arrival, arrival_rate) = arrival_rows
-                .get(&station_id)
-                .map(|(t, cnt)| {
-                    let last = t
-                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                        .unwrap_or_default();
-                    // 30 minutes has 6 expected 5-minute buckets; scale to 100%
-                    let rate = (*cnt as f64 / 6.0 * 100.0 * 10.0).round() / 10.0;
-                    (last, rate.min(100.0))
-                })
-                .unwrap_or((String::new(), 0.0));
+            // 最后到达时间与到报率均由本次窗口聚合结果推导。
+            // 真正的 24h 到报率需要扫描全表（3400 万行），成本过高；
+            // 此处到报率为窗口近似值：窗口内有到报记 100%，无到报记 0%。
+            let last_arrival = row
+                .3
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default();
+            let arrival_rate = if is_online { 100.0 } else { 0.0 };
 
             stations_out.push(StationStatus {
                 id: station_id.clone(),
@@ -1015,11 +964,11 @@ impl DbService {
         };
 
         // For each station, get the latest rows per device within a short window.
-        // Use a simple ORDER BY ... LIMIT query (fast with ix_station_receivetime)
-        // and deduplicate the latest per (device_type, device_nid) in Rust.
+        // 生产表无 receive_time 索引，使用 data_time 条件配合复合索引
+        // (station_num, device_type, device_nid, data_time)，并按设备去重取最新。
         let sql = "SELECT device_type, device_nid, data_time, `data` \
              FROM data_st \
-             WHERE station_num = ? AND receive_time > (NOW() - INTERVAL 5 MINUTE) \
+             WHERE station_num = ? AND data_time > (NOW() - INTERVAL 5 MINUTE) \
              ORDER BY device_type, device_nid, data_time DESC, receive_time DESC, id DESC \
              LIMIT 100";
 

@@ -176,6 +176,24 @@ async fn main() {
         cfg.cloud_database.password = pwd;
     }
 
+    // 环境变量覆盖运行模式与端口（对应 start.ps1 的 -Simulated / -Port 参数）
+    if let Ok(v) = std::env::var("STCHCK_SIMULATED") {
+        let v = v.trim().to_lowercase();
+        if v == "1" || v == "true" || v == "yes" || v == "on" {
+            cfg.monitor.simulation_mode = true;
+            tracing::info!("环境变量 STCHCK_SIMULATED 已强制启用模拟模式");
+        }
+    }
+    if let Ok(p) = std::env::var("STCHCK_PORT") {
+        match p.trim().parse::<u32>() {
+            Ok(port) if port > 0 && port <= 65535 => {
+                cfg.server.port = port;
+                tracing::info!("环境变量 STCHCK_PORT 覆盖端口为 {}", port);
+            }
+            _ => tracing::warn!("环境变量 STCHCK_PORT 值 {:?} 无效，已忽略", p),
+        }
+    }
+
     let (tx, _rx) = broadcast::channel::<String>(16);
     let (devices_tx, _devices_rx) = broadcast::channel::<String>(128);
 

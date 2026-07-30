@@ -74,6 +74,45 @@ vendor = "华云"
 | 模拟模式 | `simulation_mode = true`  | 无需数据库，生成随机模拟数据  |
 | 真实模式 | `simulation_mode = false` | 连接 MySQL 查询`data_st` 表 |
 
+### 环境变量覆盖
+
+以下环境变量会在启动时覆盖 `config.toml` 对应配置（无需修改配置文件即可临时切换）：
+
+| 环境变量 | 作用 | 示例 |
+| -------- | ---- | ---- |
+| `DB_PASSWORD` | 覆盖 `[database]` 密码 | `export DB_PASSWORD="xxx"` |
+| `CLOUD_DB_PASSWORD` | 覆盖 `[cloud_database]` 密码 | `export CLOUD_DB_PASSWORD="xxx"` |
+| `STCHCK_SIMULATED` | 设为 `1`/`true`/`yes`/`on` 时强制启用模拟模式（对应 `start.ps1 -Simulated`） | `$env:STCHCK_SIMULATED="1"` |
+| `STCHCK_PORT` | 覆盖 `[server]` 端口，1–65535（对应 `start.ps1 -Port`） | `$env:STCHCK_PORT="9090"` |
+
+### 实时数据工作机制
+
+```
+启动 0.5s 后首次查询 ─┐
+                     ├─► 后台任务查询数据库 ─► 写入内存缓存 ─► SSE 推送 /api/events
+每 refresh_interval_secs 秒循环 ─┘
+前端页面：优先监听 SSE 实时更新，断连自动降级为定时轮询 /api/status
+```
+
+- 真实模式查询生产表 `data_st`，时间条件使用 **`data_time`（观测时间）**而非 `receive_time`。
+  生产表索引为 `(station_num, device_type, device_nid, data_time)` 复合索引，**`receive_time` 无索引**，
+  在 3400 万行级表上按 `receive_time` 过滤需要全站扫描（>90s 不可用完），按 `data_time` 过滤可走索引。
+- 聚合查询采用**单站查询 + 连接池并发**（10 连接）：IN-list 分组查询需对全部站点做索引扫描
+  （实测 15~44s/次），单站查询约 1s，32 站并发后每轮总耗时约 10~20s。
+- 在线判定：最近 6 分钟窗口内有数据即在线（旧的 `r2==r5` 判定针对每 5 分钟一报的低频台站设计，
+  对当前每设备每分钟数百条的高频数据恒为 false，会导致全部站点误显示离线）。
+- `arrival_rate_24h` 为**窗口近似值**（窗口内有到报记 100%，无到报记 0%）；
+  真正的 24 小时到报率需要全表扫描，成本过高。如需精确值，请先按下文建索引再恢复统计。
+- 数据中的 `data_time` 为 UTC 时间（与本机 UTC+8 相差 8 小时），界面显示的时间戳为数据库原值。
+- 如希望进一步提升真实模式查询速度，可由 DBA 评估后补充索引（DDL 需自行在生产执行，程序不会自动执行任何写操作）：
+
+  ```sql
+  ALTER TABLE data_st ADD INDEX idx_station_receivetime (station_num, receive_time);
+  ```
+
+- 程序对生产 MySQL **只执行 SELECT**，不存在 INSERT/UPDATE/DELETE/DDL 等高风险操作；
+  写操作仅出现在模拟模式初始化本地 SQLite `test_data.db` 时，且全部参数化。
+
 ## 使用方法
 
 ### 方式一：使用启动脚本（推荐）
