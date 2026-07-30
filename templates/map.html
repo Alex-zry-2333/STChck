@@ -655,7 +655,7 @@ async function loadMapStations() {
       const status = statusMap[st.id] || st;
       return {
         id: st.id,
-        name: meta.station_name || st.name,
+        name: st.name || meta.station_name,
         province: meta.province || '未知省份',
         longitude: meta.longitude,
         latitude: meta.latitude,

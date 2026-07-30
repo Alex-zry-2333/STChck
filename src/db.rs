@@ -41,6 +41,72 @@ fn parse_dms_coord(s: &str) -> f64 {
     dd + mm / 60.0 + ss / 3600.0
 }
 
+/// 内置站点校正表：省份 + 近似坐标（城市级）。
+/// 生产库 station_params 存在脏数据（例如 52737 被错挂为"华云-重庆酉阳基准站"、
+/// 53817 省份错写为"云南"），当数据库行与配置冲突或字段缺失时用本表兜底。
+fn builtin_station_meta(id: &str) -> Option<(&'static str, f64, f64)> {
+    let m = match id {
+        "50936" => ("吉林", 45.6, 122.8),
+        "50968" => ("黑龙江", 45.2, 127.9),
+        "53399" => ("河北", 41.1, 114.7),
+        "53942" => ("陕西", 35.7, 109.4),
+        "54333" => ("辽宁", 41.9, 122.8),
+        "54416" => ("北京", 40.4, 116.8),
+        "54808" => ("山东", 36.2, 115.6),
+        "56173" => ("四川", 32.8, 102.5),
+        "56312" => ("西藏", 29.6, 94.3),
+        "57633" => ("重庆", 28.8, 108.7),
+        "57958" => ("广西", 25.0, 110.3),
+        "58005" => ("河南", 34.4, 115.6),
+        "58457" => ("浙江", 30.2, 120.1),
+        "58737" => ("福建", 27.0, 118.3),
+        "52983" => ("甘肃", 35.8, 104.1),
+        "53817" => ("宁夏", 36.0, 106.2),
+        "51358" => ("新疆", 44.2, 85.9),
+        "52754" => ("青海", 37.3, 100.1),
+        "52856" => ("青海", 36.3, 100.6),
+        "53963" => ("山西", 35.6, 111.3),
+        "56739" => ("云南", 25.0, 98.4),
+        "57251" => ("湖北", 33.2, 110.4),
+        "57793" => ("江西", 27.8, 114.3),
+        "57832" => ("贵州", 26.6, 108.6),
+        "57874" => ("湖南", 26.4, 112.3),
+        "58141" => ("江苏", 33.6, 119.0),
+        "58362" => ("上海", 31.4, 121.4),
+        "58437" => ("安徽", 30.1, 118.1),
+        "59758" => ("海南", 20.0, 110.3),
+        "59294" => ("广东", 23.2, 113.6),
+        "52737" => ("青海", 37.3, 97.3),
+        "57914" => ("贵州", 26.4, 106.6),
+        _ => return None,
+    };
+    Some(m)
+}
+
+/// 规范化省份名便于比较（去掉 省/市/自治区 等后缀）
+fn normalize_province(p: &str) -> String {
+    let p = p.trim();
+    for suffix in ["壮族自治区", "回族自治区", "维吾尔自治区", "自治区", "省", "市"] {
+        if let Some(x) = p.strip_suffix(suffix) {
+            return x.to_string();
+        }
+    }
+    p.to_string()
+}
+
+/// 判断配置名称与数据库名称是否冲突：
+/// 取配置名的全部 2 字子串，数据库名一个都不包含则视为冲突
+/// （如 配置"青海德令哈" vs 库"华云-重庆酉阳基准站"）。
+fn names_conflict(config_name: &str, db_name: &str) -> bool {
+    let chars: Vec<char> = config_name.chars().collect();
+    if chars.len() < 2 || db_name.trim().is_empty() {
+        return false;
+    }
+    !chars
+        .windows(2)
+        .any(|w| db_name.contains(&w.iter().collect::<String>()))
+}
+
 #[derive(sqlx::FromRow)]
 struct StationParamsRow {
     #[sqlx(rename = "station_id")]
@@ -421,45 +487,8 @@ impl DbService {
             (None, Some(p)) => p,
             (None, None) => {
                 // Fallback: create meta from config with approximate coordinates
-                fn station_sim_meta(id: &str) -> (&'static str, f64, f64) {
-                    match id {
-                        "50936" => ("吉林", 45.6, 122.8),
-                        "50968" => ("黑龙江", 45.2, 127.9),
-                        "53399" => ("河北", 41.1, 114.7),
-                        "53942" => ("陕西", 35.7, 109.4),
-                        "54333" => ("辽宁", 41.9, 122.8),
-                        "54416" => ("北京", 40.4, 116.8),
-                        "54808" => ("山东", 36.2, 115.6),
-                        "56173" => ("四川", 32.8, 102.5),
-                        "56312" => ("西藏", 29.6, 94.3),
-                        "57633" => ("重庆", 28.8, 108.7),
-                        "57958" => ("广西", 25.0, 110.3),
-                        "58005" => ("河南", 34.4, 115.6),
-                        "58457" => ("浙江", 30.2, 120.1),
-                        "58737" => ("福建", 27.0, 118.3),
-                        "52983" => ("甘肃", 35.8, 104.1),
-                        "53817" => ("宁夏", 36.0, 106.2),
-                        "51358" => ("新疆", 44.2, 85.9),
-                        "52754" => ("青海", 37.3, 100.1),
-                        "52856" => ("青海", 36.3, 100.6),
-                        "53963" => ("山西", 35.6, 111.3),
-                        "56739" => ("云南", 25.0, 98.4),
-                        "57251" => ("湖北", 33.2, 110.4),
-                        "57793" => ("江西", 27.8, 114.3),
-                        "57832" => ("贵州", 26.6, 108.6),
-                        "57874" => ("湖南", 26.4, 112.3),
-                        "58141" => ("江苏", 33.6, 119.0),
-                        "58362" => ("上海", 31.4, 121.4),
-                        "58437" => ("安徽", 30.1, 118.1),
-                        "59758" => ("海南", 20.0, 110.3),
-                        "59294" => ("广东", 23.2, 113.6),
-                        "52737" => ("青海", 37.3, 97.3),
-                        "57914" => ("贵州", 26.4, 106.6),
-                        _ => ("未知省份", 0.0, 0.0),
-                    }
-                }
                 for st in station_ids {
-                    let meta = station_sim_meta(&st.id);
+                    let meta = builtin_station_meta(&st.id).unwrap_or(("未知省份", 0.0, 0.0));
                     result.insert(
                         st.id.clone(),
                         StationMeta {
@@ -558,6 +587,46 @@ impl DbService {
                         is_reference_radiation: false,
                     },
                 );
+            }
+        }
+
+        // 用配置与内置校正表修正 station_params 脏数据
+        for st in station_ids {
+            let builtin = builtin_station_meta(&st.id);
+            if let Some(meta) = result.get_mut(&st.id) {
+                if meta.station_name.is_empty() {
+                    meta.station_name = st.name.clone();
+                } else if names_conflict(&st.name, &meta.station_name) {
+                    // 名称冲突：DB 行属于别的站（错挂），该行坐标/海拔/省份均不可信
+                    tracing::warn!(
+                        "站点 {} 元数据与配置冲突：配置='{}' 库='{}'，采用配置名称与内置校正坐标",
+                        st.id,
+                        st.name,
+                        meta.station_name
+                    );
+                    meta.station_name = st.name.clone();
+                    meta.altitude = 0.0;
+                    if let Some((prov, lat, lon)) = builtin {
+                        meta.province = prov.to_string();
+                        if lat != 0.0 {
+                            meta.latitude = lat;
+                        }
+                        if lon != 0.0 {
+                            meta.longitude = lon;
+                        }
+                    }
+                } else if let Some((prov, lat, lon)) = builtin {
+                    // 省份缺失或规范化后与校正表不一致（如 固原被写成 云南）→ 以校正表为准
+                    let dbp = normalize_province(&meta.province);
+                    if dbp.is_empty() || dbp == "未知省份" || dbp != normalize_province(prov) {
+                        meta.province = prov.to_string();
+                    }
+                    // 坐标完全缺失时用校正表近似坐标
+                    if meta.latitude == 0.0 && meta.longitude == 0.0 && lat != 0.0 {
+                        meta.latitude = lat;
+                        meta.longitude = lon;
+                    }
+                }
             }
         }
 
