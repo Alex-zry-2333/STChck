@@ -198,6 +198,16 @@ body {
   padding: 6px 0;
   border-radius: var(--radius-sm);
   background: rgba(0,0,0,0.03);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+.stat-chip:hover { background: var(--primary-light); }
+.stat-chip.active {
+  background: var(--primary-light);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(33,150,243,0.15);
 }
 .stat-chip .num { font-size: 16px; font-weight: 700; }
 .stat-chip .num.green { color: var(--green); }
@@ -434,9 +444,6 @@ body {
   50% { box-shadow: 0 0 12px rgba(244,67,54,0.9); transform: scale(1.25); }
 }
 
-/* ========== 底图暗化，突出标记 ========== */
-.base-tile-layer { filter: brightness(0.88) saturate(0.85); }
-
 @media (max-width: 768px) {
   .side-panel { width: 280px; }
   .drawer { width: 100%; max-width: 100vw; }
@@ -502,9 +509,9 @@ body {
     <span class="filter-chip active" data-province="all">全部</span>
   </div>
   <div class="panel-stats" id="panelStats">
-    <div class="stat-chip"><div class="num green" id="statOnline">0</div><div class="label">在线</div></div>
-    <div class="stat-chip"><div class="num red" id="statAlarm">0</div><div class="label">报警</div></div>
-    <div class="stat-chip"><div class="num gray" id="statOffline">0</div><div class="label">离线</div></div>
+    <div class="stat-chip" data-status="online" title="点击筛选在线站点" onclick="filterByStatus('online')"><div class="num green" id="statOnline">0</div><div class="label">在线</div></div>
+    <div class="stat-chip" data-status="alarm" title="点击筛选报警站点" onclick="filterByStatus('alarm')"><div class="num red" id="statAlarm">0</div><div class="label">报警</div></div>
+    <div class="stat-chip" data-status="offline" title="点击筛选离线站点" onclick="filterByStatus('offline')"><div class="num gray" id="statOffline">0</div><div class="label">离线</div></div>
   </div>
   <div class="panel-list" id="stationList"></div>
 </div>
@@ -587,7 +594,7 @@ function initMap() {
   map = new ol.Map({
     target: 'mapContainer',
     layers: [
-      new ol.layer.Tile({ source: baseSource, className: 'base-tile-layer' })
+      new ol.layer.Tile({ source: baseSource })
     ],
     view: new ol.View({
       center: ol.proj.fromLonLat([104.5, 35.5]),
@@ -832,8 +839,9 @@ function popupClose() {
 
 function popupOpenDrawer() {
   if (currentPopupStation) {
+    const id = currentPopupStation.id; // 先取 id，popupClose 会清空 currentPopupStation
     popupClose();
-    openDrawer(currentPopupStation.id);
+    openDrawer(id);
   }
 }
 
@@ -906,6 +914,16 @@ function filterByProvince(province) {
   filterStationList();
 }
 
+// 状态分类筛选：点击统计块切换，再次点击取消
+let currentStatusFilter = null;
+function filterByStatus(status) {
+  currentStatusFilter = (currentStatusFilter === status) ? null : status;
+  document.querySelectorAll('#panelStats .stat-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.dataset.status === currentStatusFilter);
+  });
+  filterStationList();
+}
+
 function filterStationList() {
   const search = document.getElementById('searchInput').value.toLowerCase();
   renderStationList(search, currentProvinceFilter);
@@ -925,7 +943,7 @@ function renderStationList(search, provinceFilter) {
     filtered = filtered.filter(s => s.province === provinceFilter);
   }
 
-  // 更新统计
+  // 更新统计（统计数字不受状态筛选影响，始终反映搜索+省份范围）
   const online = filtered.filter(s => s.online && s.alarm_count === 0).length;
   const alarm = filtered.filter(s => s.alarm_count > 0).length;
   const offline = filtered.filter(s => !s.online).length;
@@ -933,12 +951,22 @@ function renderStationList(search, provinceFilter) {
   document.getElementById('statAlarm').textContent = alarm;
   document.getElementById('statOffline').textContent = offline;
 
-  if (filtered.length === 0) {
+  // 应用状态分类筛选（在线/报警/离线统计块点击）
+  let displayed = filtered;
+  if (currentStatusFilter === 'online') {
+    displayed = filtered.filter(s => s.online && s.alarm_count === 0);
+  } else if (currentStatusFilter === 'alarm') {
+    displayed = filtered.filter(s => s.alarm_count > 0);
+  } else if (currentStatusFilter === 'offline') {
+    displayed = filtered.filter(s => !s.online);
+  }
+
+  if (displayed.length === 0) {
     container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:13px;">没有匹配的站点</div>';
     return;
   }
 
-  container.innerHTML = filtered.map(st => {
+  container.innerHTML = displayed.map(st => {
     const statusClass = st.alarm_count > 0 ? 'alarm' : (st.online ? 'online' : 'offline');
     const rateClass = st.arrival_rate_24h < 90 ? 'rate-bad' : (st.arrival_rate_24h < 96 ? 'rate-warn' : 'rate-good');
     return '<div class="map-station-item" data-id="' + escHtml(st.id) + '" onclick="onListItemClick(\'' + escHtml(st.id) + '\')">' +
