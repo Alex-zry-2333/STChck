@@ -169,31 +169,3 @@ jobs:
           echo "   2. Branch protection rules blocking push"
           echo "   3. Repository settings → Actions → Workflow permissions"
           exit 1
-
-      # ============================================
-      # Step 11: Send success notification email
-      # 需要在仓库 Settings → Secrets and variables → Actions 中配置：
-      #   SMTP_SERVER / SMTP_PORT / SMTP_USERNAME / SMTP_PASSWORD / MAIL_TO
-      # 未配置时该步骤会失败但不影响整体结果（continue-on-error）
-      # ============================================
-      - name: Send success notification email
-        if: success()
-        continue-on-error: true
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: ${{ secrets.SMTP_SERVER }}
-          server_port: ${{ secrets.SMTP_PORT }}
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "✅ [STChck] CI 全部通过: ${{ github.ref_name }} 已晋升到 hw/tested"
-          to: ${{ secrets.MAIL_TO }}
-          from: STChck CI
-          body: |
-            CI/CD 流水线全部通过！
-
-            分支: ${{ github.ref_name }}
-            提交: ${{ github.sha }}
-            触发人: ${{ github.actor }}
-            结果: 格式检查 / 构建 / 测试 全部通过，已自动晋升到 hw/tested 分支
-
-            查看详情: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

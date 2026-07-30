@@ -18,28 +18,6 @@
 | 7 | Run tests | 运行所有单元测试 (`cargo test`) |
 | 8 | Promote to hw/tested | 测试通过则推送到 `hw/tested` 分支 |
 | 9 | Notify on failure | 测试失败则阻止推送并提示 |
-| 10 | Notify on promotion failure | 推送失败时给出排查提示 |
-| 11 | Send success notification email | 全部通过时发送邮件通知 |
-
-### 邮件通知
-
-| 场景 | 通知方式 |
-|------|----------|
-| 失败 | GitHub 默认通知（无需配置，由 GitHub 账户通知设置控制） |
-| **全部通过** | 工作流主动发邮件（Step 11，需配置下方 SMTP Secrets） |
-
-全部通过时的邮件通知需要在仓库 **Settings → Secrets and variables → Actions** 中配置：
-
-| Secret | 说明 | 示例 |
-|--------|------|------|
-| `SMTP_SERVER` | SMTP 服务器地址 | `smtp.qq.com` / `smtp.163.com` / `smtp.exmail.qq.com` |
-| `SMTP_PORT` | SMTP 端口 | `465`（SSL）或 `587`（STARTTLS） |
-| `SMTP_USERNAME` | 发件邮箱账号 | `yourname@qq.com` |
-| `SMTP_PASSWORD` | 邮箱授权码（非登录密码） | QQ/163 邮箱需在设置中开启 SMTP 并生成授权码 |
-| `MAIL_TO` | 收件人地址，多个用逗号分隔 | `a@x.com,b@x.com` |
-
-- 未配置 Secrets 时 Step 11 会失败，但已设置 `continue-on-error: true`，**不影响**晋升和流水线结果。
-- 如果希望连失败邮件也由工作流统一发送（而非依赖 GitHub 账户设置），可参照 Step 11 复制一个 `if: failure()` 的邮件步骤。
 
 ### 分支流转
 
