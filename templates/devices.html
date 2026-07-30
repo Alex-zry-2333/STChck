@@ -179,7 +179,9 @@ body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system,
 </div>
 
 <script>
-const STATION_ID = location.pathname.split('/').pop();
+// 路径形如 /station/50936/devices，取 station 后的段作为站号
+const __pathParts = location.pathname.split('/').filter(Boolean);
+const STATION_ID = __pathParts[0] === 'station' ? (__pathParts[1] || '') : __pathParts.pop();
 let allDevices = [];
 let selectedIndex = -1;
 let carouselTimer = null;
@@ -207,7 +209,7 @@ async function loadData() {
     startCarousel();
     startDevicesSSE();
     if (allDevices.length === 0) {
-      document.getElementById('detailContent').innerHTML = '<div class="empty-state"><p>缓存预热中，请稍候...</p></div>';
+      document.getElementById('detailContent').innerHTML = '<div class="empty-state"><p>当前分钟暂无设备上报数据，请稍后刷新</p></div>';
     }
   } catch (e) {
     console.error('Load devices error:', e);
@@ -292,9 +294,9 @@ function renderDetail(device) {
     return;
   }
 
-  const statusText = device.is_online ? '在线' : (device.is_fallback ? '上分钟值' : '离线');
+  const statusText = device.is_online ? '在线' : (device.is_fallback ? '稍旧数据' : '离线');
   titleEl.textContent = (device.device_name || device.device_type) + ' ' + device.device_nid;
-  subtitleEl.textContent = device.is_online ? '当前分钟数据' : (device.is_fallback ? '当前分钟无数据，展示上分钟值' : '设备离线');
+  subtitleEl.textContent = device.is_online ? '最近 1 分钟内数据' : (device.is_fallback ? '最近 6 分钟内最新一条' : '设备离线');
   modeTag.textContent = selectedIndex === -1 ? '轮播模式' : '手动选择';
 
   let html = '';

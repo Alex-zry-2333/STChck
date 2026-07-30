@@ -963,14 +963,23 @@ impl DbService {
             None => return result,
         };
 
-        // For each station, get the latest rows per device within a short window.
-        // 生产表无 receive_time 索引，使用 data_time 条件配合复合索引
-        // (station_num, device_type, device_nid, data_time)，并按设备去重取最新。
-        let sql = "SELECT device_type, device_nid, data_time, `data` \
-             FROM data_st \
-             WHERE station_num = ? AND data_time > (NOW() - INTERVAL 5 MINUTE) \
-             ORDER BY device_type, device_nid, data_time DESC, receive_time DESC, id DESC \
-             LIMIT 100";
+        // 设备大多每 5 分钟在整五分钟内批量上报一次，仅查“当前分钟”会漏掉绝大多数设备。
+        // 窗口放宽到最近 6 分钟（覆盖一个完整上报周期）。
+        // 注意：高频设备（如 YACRA00）单分钟可有上百条记录且按字母序排在最前，
+        // 简单 LIMIT 会把其他设备全部截断，因此先用子查询按设备取 MAX(data_time)，
+        // 再回表取对应记录；同一分钟内的多条由 ORDER BY + Rust 侧去重保留最新接收的一条。
+        let sql = "SELECT t.device_type, t.device_nid, t.data_time, t.`data` \
+             FROM data_st t \
+             INNER JOIN ( \
+                 SELECT device_type, device_nid, MAX(data_time) AS max_dt \
+                 FROM data_st \
+                 WHERE station_num = ? AND data_time > (NOW() - INTERVAL 6 MINUTE) \
+                 GROUP BY device_type, device_nid \
+             ) m ON t.device_type = m.device_type \
+                AND t.device_nid = m.device_nid \
+                AND t.data_time = m.max_dt \
+             WHERE t.station_num = ? \
+             ORDER BY t.device_type, t.device_nid, t.receive_time DESC, t.id DESC";
 
         #[derive(sqlx::FromRow)]
         struct StRow {
@@ -981,6 +990,7 @@ impl DbService {
         }
 
         let rows: Vec<StRow> = match sqlx::query_as::<_, StRow>(&sql)
+            .bind(station_id)
             .bind(station_id)
             .fetch_all(pool)
             .await
@@ -998,7 +1008,6 @@ impl DbService {
             .unwrap()
             .with_nanosecond(0)
             .unwrap();
-        let prev_minute = now_minute - chrono::Duration::minutes(1);
 
         let mut seen: HashSet<(String, String)> = HashSet::new();
         let mut devices: Vec<DeviceStatusInfo> = Vec::new();
@@ -1010,8 +1019,9 @@ impl DbService {
             }
             seen.insert(key);
 
-            let is_online = row.data_time == now_minute;
-            let is_fallback = row.data_time == prev_minute;
+            // 最近 1 分钟内有数据视为在线；窗口内（6 分钟）有数据但稍旧的标记为 fallback
+            let is_online = row.data_time >= now_minute - chrono::Duration::minutes(1);
+            let is_fallback = !is_online;
             let parsed = parse_st_packet(&row.data);
             let (common_status, specific_status) =
                 classify_device_status(&parsed, &row.device_type);

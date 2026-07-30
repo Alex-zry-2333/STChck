@@ -854,14 +854,8 @@ async fn api_station_devices(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Json<models::StationDevicesResponse> {
-    {
-        let cache = state.station_devices.read().await;
-        if let Some(cached) = cache.get(&id) {
-            return Json(cached.clone());
-        }
-    }
-
-    // Cache miss: query directly, cache immediately, and return the data
+    // 设备状态数据按设备实时性要求较高，缓存（5 分钟刷新）会过期，
+    // 因此页面访问始终实时查询，同时更新缓存供 SSE 订阅者使用。
     let station_name = state
         .config
         .stations
