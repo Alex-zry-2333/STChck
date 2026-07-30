@@ -593,6 +593,18 @@ pub fn is_kit(item: &str) -> bool {
     false
 }
 
+/// 数值型项目（非 0=正常 的状态项）：温度、电压、供电类型等。
+/// 这些项目的值本身不是故障指示，永远不应标记为异常（与 tm.c 的 isKIT 口径一致，
+/// 原版 2 字符分支不包含 wA/wB、xA/xB/xC）。
+fn is_value_item(item: &str) -> bool {
+    let bytes = item.as_bytes();
+    if item.len() != 2 {
+        return false;
+    }
+    (bytes[0] == b'w' && matches!(bytes[1], b'A' | b'B'))
+        || (bytes[0] == b'x' && matches!(bytes[1], b'A' | b'B' | b'C'))
+}
+
 /// Parse ST packet - port of the parsing loop from tm.c
 pub fn parse_st_packet(data: &str) -> Vec<CheckItem> {
     let parts: Vec<&str> = data.split(',').collect();
@@ -622,7 +634,9 @@ pub fn parse_st_packet(data: &str) -> Vec<CheckItem> {
         }
 
         if is_kit(item) {
-            let is_abnormal = !(value == "0" || value == "0:0:0:0:0:0:0:0:0:0");
+            // 数值型项目（温度/电压/供电类型）只展示数值，不参与异常判定
+            let is_abnormal = !is_value_item(item)
+                && !(value == "0" || value == "0:0:0:0:0:0:0:0:0:0");
             let alarm_text = if is_abnormal {
                 get_alarm(item, value)
             } else {

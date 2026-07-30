@@ -169,12 +169,12 @@ mod tests {
         let data = "ST,001,001,2024,01,01,00,wA,25.0,xB,220,tA,0,sA,0,aCF,0,aDOOR,1";
         let result = parse_st_packet(data);
 
-        // wA=25.0 is a kit, value != 0 so abnormal
+        // wA=25.0 是数值型项目（温度值），只展示不判异常
         let wa = result.iter().find(|r| r.item == "wA");
         assert!(wa.is_some());
         let wa = wa.unwrap();
-        assert!(wa.abnormal); // 25.0 != 0
-        assert!(!wa.alarm.is_empty());
+        assert!(!wa.abnormal); // 温度值不是故障指示
+        assert!(wa.alarm.is_empty());
 
         // tA=0 is a kit, value == 0 so normal
         let ta = result.iter().find(|r| r.item == "tA");
