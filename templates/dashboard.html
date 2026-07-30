@@ -779,7 +779,8 @@ function updateDashboard(data) {
   document.getElementById('alarmCount').textContent = summary.alarms || 0;
   document.getElementById('checkedItems').textContent = summary.checked || 0;
 
-  document.getElementById('lastUpdate').textContent = formatTime(data.last_update) || '--';
+  const lastUpdateEl = document.getElementById('lastUpdate');
+  if (lastUpdateEl) lastUpdateEl.textContent = formatTime(data.last_update) || '--';
 
   const errorBar = document.getElementById('errorBar');
   if (data.error) {
@@ -1351,6 +1352,8 @@ async function fetchData() {
 }
 
 startSSE();
+// 页面加载后立即拉取一次当前数据，避免空屏等待下一个 SSE 推送周期
+fetchData();
 
 // Initial chart load with delay
 setTimeout(function() {
