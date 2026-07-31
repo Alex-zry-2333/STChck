@@ -13,596 +13,262 @@ pub fn get_station_index<'a>(stations: &'a [StationConfig], id: &str) -> Option<
 }
 
 /// Port of getALM() from tm.c
+/// 状态项类别（判定与展示策略），依据《地面气象要素编码与数据格式》附录C
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusKind {
+    /// 0=正常，非 0 异常（表C.2 通用取值或分项专用取值）
+    Status,
+    /// 数值型：温度/电压/电流/信号强度等，仅展示不告警
+    Value,
+    /// 等级型：如 tFB 无线信号强度 0~4 级，0 级最差，<=1 级判异常
+    Level,
+}
+
+/// 状态项静态定义（附录C 表C.1/C.2 及各分项取值表）
+pub struct StatusItemSpec {
+    pub code: &'static str,
+    pub name: &'static str,
+    pub kind: StatusKind,
+    pub unit: &'static str,
+    pub texts: &'static [(&'static str, &'static str)],
+}
+
+use StatusKind::*;
+
+/// 表C.2 通用状态取值
+const GENERIC_STATUS_TEXTS: &[(&str, &str)] = &[
+    ("0", "正常"),
+    ("1", "异常"),
+    ("2", "故障（未检测到）"),
+    ("3", "偏高"),
+    ("4", "偏低"),
+    ("5", "超上限"),
+    ("6", "超下限"),
+    ("7", "预留"),
+    ("8", "预留"),
+    ("9", "未检查"),
+    ("N", "关闭或无配置"),
+];
+
+const RAIN_TEXTS: &[(&str, &str)] = &[("0", "正常"), ("1", "异常"), ("2", "堵塞")];
+const CAM_TEXTS: &[(&str, &str)] =
+    &[("0", "正常"), ("1", "可连接但无法拍照"), ("2", "故障无法连接")];
+const HILO_TEXTS: &[(&str, &str)] = &[("0", "正常"), ("3", "偏高"), ("4", "偏低")];
+const HEAT_TEXTS: &[(&str, &str)] = &[
+    ("0", "正常"),
+    ("1", "加热异常"),
+    ("2", "故障"),
+    ("3", "加热温度偏高"),
+    ("4", "加热温度偏低"),
+    ("5", "加热停止"),
+];
+const COMM_TEXTS: &[(&str, &str)] = &[("0", "正常"), ("1", "故障"), ("2", "未启用")];
+const POLLUTION_TEXTS: &[(&str, &str)] =
+    &[("0", "正常"), ("1", "一般污染"), ("2", "严重污染")];
+
+macro_rules! spec {
+    ($code:expr, $name:expr, Status) => {
+        StatusItemSpec { code: $code, name: $name, kind: Status, unit: "", texts: &[] }
+    };
+    ($code:expr, $name:expr, Status, $texts:expr) => {
+        StatusItemSpec { code: $code, name: $name, kind: Status, unit: "", texts: $texts }
+    };
+    ($code:expr, $name:expr, Status, unit: $unit:expr) => {
+        StatusItemSpec { code: $code, name: $name, kind: Status, unit: $unit, texts: &[] }
+    };
+    ($code:expr, $name:expr, Value, $unit:expr) => {
+        StatusItemSpec { code: $code, name: $name, kind: Value, unit: $unit, texts: &[] }
+    };
+    ($code:expr, $name:expr, Value, $unit:expr, $texts:expr) => {
+        StatusItemSpec { code: $code, name: $name, kind: Value, unit: $unit, texts: $texts }
+    };
+    ($code:expr, $name:expr, Level, $unit:expr) => {
+        StatusItemSpec { code: $code, name: $name, kind: Level, unit: $unit, texts: &[] }
+    };
+}
+
+/// 附录C 状态项总表。
+/// 说明：
+/// - 报批稿表C.3（y 类）中"辅助设施自检"印为 yC，与翻斗雨量 yC 冲突，
+///   疑为笔误；沿用 tm.c 口径 yB 为辅助设施自检。
+/// - tE/tF/tG 按报批稿为 卫星/无线/光纤通信状态（tm.c 旧版为摄像机网口，
+///   摄像机网口在新版中为 tDA/tDB/tDC）。
+/// - v 类开关（vA..vK ON/OFF/N）、yN、aSWITCH 等开关项暂不纳入解析。
+static SPECS: &[StatusItemSpec] = &[
+    // ---- 单字母类别自检（表C.1）----
+    spec!("z", "设备状态自检", Status),
+    spec!("y", "测量仪工作状态", Status),
+    spec!("x", "供电类状态", Status),
+    spec!("w", "工作温度类状态", Status),
+    spec!("v", "加热部件类状态", Status),
+    spec!("u", "通风部件类状态", Status),
+    spec!("t", "通信类状态", Status),
+    spec!("s", "污染类状态", Status),
+    spec!("r", "采样数据类状态", Status),
+    spec!("q", "分钟数据类状态", Status),
+    spec!("a", "其他工作类状态", Status),
+    // ---- y 类：测量仪工作状态 ----
+    spec!("yA", "测量仪测量部分自检状态", Status),
+    spec!("yB", "测量仪辅助设施自检状态", Status),
+    spec!("yC", "翻斗式雨量工作状态检测", Status, RAIN_TEXTS),
+    spec!("yD", "雨量筒筒口堵塞监测", Status, RAIN_TEXTS),
+    spec!("yE", "雨量筒上翻斗状态监测", Status, RAIN_TEXTS),
+    spec!("yF", "雨量计数翻斗状态监测", Status, RAIN_TEXTS),
+    spec!("yG", "雨量计数翻斗1状态监测", Status, RAIN_TEXTS),
+    spec!("yH", "雨量计数翻斗2状态监测", Status, RAIN_TEXTS),
+    spec!("yG1", "雨量计数翻斗1状态监测", Status, RAIN_TEXTS),
+    spec!("yH1", "雨量计数翻斗2状态监测", Status, RAIN_TEXTS),
+    spec!("yI", "泵状态", Status, &[("0", "正常"), ("2", "故障")]),
+    spec!("yJ", "颗粒物数谱传感器状态", Status, &[("0", "正常"), ("1", "异常")]),
+    spec!("yK", "鱼眼摄像机工作状态", Status, CAM_TEXTS),
+    spec!("yL", "普通摄像机1工作状态", Status, CAM_TEXTS),
+    spec!("yM", "普通摄像机2工作状态", Status, CAM_TEXTS),
+    // ---- x 类：供电 ----
+    spec!("xA", "供电类型", Value, ""), // AC/DC
+    spec!("xB", "外接电源电压", Value, "伏"),
+    spec!("xC", "蓄电池电压", Value, "伏"),
+    spec!("xD", "设备供电电压", Value, "伏"),
+    spec!("xE", "主板电压", Value, "伏"),
+    spec!("xEA", "主板电压状态", Status, HILO_TEXTS),
+    spec!("xF", "工作电流", Value, "毫安"),
+    spec!("xFA", "工作电流状态", Status, HILO_TEXTS),
+    spec!("xG", "加热电源电压", Value, "伏"),
+    spec!("xGA", "加热电源电压状态", Status, HILO_TEXTS),
+    spec!("xH", "蓄电池电量", Value, "/100"),
+    // ---- w 类：工作温度 ----
+    spec!("wA", "内部电路温度", Value, "℃"),
+    spec!("wAA", "内部电路温度状态", Status, HILO_TEXTS),
+    spec!("wB", "探测器温度", Value, "℃"),
+    spec!("wC", "腔体温度", Value, "℃"),
+    spec!("wCA", "腔体温度状态", Status, HILO_TEXTS),
+    spec!("wD", "恒温器温度", Value, "℃"),
+    spec!("wE", "机箱温度", Value, "℃"),
+    // ---- v 类：加热部件状态（开关项 vA..vK 暂不解析）----
+    spec!("vAA", "设备加热状态", Status, HEAT_TEXTS),
+    spec!("vBA", "发射器加热状态", Status, HEAT_TEXTS),
+    spec!("vCA", "接收器加热状态", Status, HEAT_TEXTS),
+    spec!("vDA", "相机加热状态", Status, HEAT_TEXTS),
+    spec!("vEA", "鱼眼摄像机加热状态", Status, HEAT_TEXTS),
+    spec!("vFA", "普通摄像机1加热状态", Status, HEAT_TEXTS),
+    spec!("vGA", "普通摄像机2加热状态", Status, HEAT_TEXTS),
+    spec!("vHA", "风速加热状态", Status, HEAT_TEXTS),
+    spec!("vIA", "风向加热状态", Status, HEAT_TEXTS),
+    spec!("vJA", "降水现象仪通道1加热状态", Status, HEAT_TEXTS),
+    spec!("vKA", "降水现象仪通道2加热状态", Status, HEAT_TEXTS),
+    // ---- u 类：通风部件 ----
+    spec!("uA", "设备通风", Status),
+    spec!("uB", "发射器通风状态", Status),
+    spec!("uC", "接收器通风状态", Status),
+    spec!("uD", "通风罩通风速度", Value, "m/s"),
+    spec!("uDA", "通风罩通风状态", Status, &[("0", "正常"), ("1", "异常"), ("2", "故障")]),
+    spec!("uE", "通风罩转速", Value, "r/min"),
+    spec!("uEA", "通风罩转速状态", Status, &[("0", "正常"), ("2", "故障"), ("3", "偏高"), ("4", "偏低")]),
+    // ---- t 类：通信 ----
+    spec!("tA", "设备到智能集成处理器通信状态", Status, COMM_TEXTS),
+    spec!("tB", "总线状态", Status, COMM_TEXTS),
+    spec!("tC", "RS232/485/422通信状态", Status, COMM_TEXTS),
+    spec!("tD", "RJ45/LAN通信状态", Status, COMM_TEXTS),
+    spec!("tDA", "鱼眼摄像机RJ45/LAN通信状态", Status, COMM_TEXTS),
+    spec!("tDB", "普通摄像机1 RJ45/LAN通信状态", Status, COMM_TEXTS),
+    spec!("tDC", "普通摄像机2 RJ45/LAN通信状态", Status, COMM_TEXTS),
+    spec!("tE", "卫星通信状态", Status, COMM_TEXTS),
+    spec!("tF", "无线通信状态", Status, COMM_TEXTS),
+    spec!("tFA", "无线信号强度", Value, "dBm"),
+    spec!("tFB", "无线信号强度状态", Level, "级"),
+    spec!("tFC", "无线连接状态", Status, &[("0", "正常"), ("7", "物理链接断开"), ("8", "逻辑链路断开")]),
+    spec!("tG", "光纤通信状态", Status, COMM_TEXTS),
+    // ---- s 类：污染 ----
+    spec!("sA", "窗口污染情况", Status, POLLUTION_TEXTS),
+    spec!("sB", "探测器污染情况", Status, POLLUTION_TEXTS),
+    spec!("sC", "相机镜头污染情况", Status, POLLUTION_TEXTS),
+    spec!("sD", "鱼眼摄像机镜头污染情况", Status, POLLUTION_TEXTS),
+    spec!("sE", "普通摄像机1镜头污染情况", Status, POLLUTION_TEXTS),
+    spec!("sF", "普通摄像机2镜头污染情况", Status, POLLUTION_TEXTS),
+    spec!("sG", "降水现象仪窗口1污染情况", Status, POLLUTION_TEXTS),
+    spec!("sH", "降水现象仪窗口2污染情况", Status, POLLUTION_TEXTS),
+    // ---- r 类：采样数据（次数，非 0 视为异常提示）----
+    spec!("rA", "当前分钟采样值超上限次数", Status, unit: "次"),
+    spec!("rB", "当前分钟采样值超下限次数", Status, unit: "次"),
+    spec!("rC", "当前分钟采样值变化率超限次数", Status, unit: "次"),
+    // ---- q 类：分钟数据 ----
+    spec!("qA", "当前设备输出分钟数据超上限", Status, &[("0", "正常"), ("1", "超上限")]),
+    spec!("qB", "当前设备输出分钟数据超下限", Status, &[("0", "正常"), ("1", "超下限")]),
+    spec!("qC", "当前设备输出分钟数据变化率超错误变化率", Status, &[("0", "正常"), ("1", "超错误变化率")]),
+    spec!("qD", "当前设备输出分钟数据变化率超存疑变化率", Status, &[("0", "正常"), ("1", "超存疑变化率")]),
+    spec!("qE", "当前设备输出分钟数据不满足小时最小变化率", Status, &[("0", "正常"), ("1", "不满足")]),
+    // ---- a 类：其他工作 ----
+    spec!("aCF", "存储卡状态", Status, &[("0", "正常"), ("1", "无卡"), ("2", "故障")]),
+    spec!("aDOOR", "机箱门状态", Status, &[("0", "正常"), ("1", "异常")]),
+    spec!("aLID", "酸雨盖状态", Status, &[("0", "正常"), ("1", "开启")]),
+    spec!("aLEVEL", "称重降水、蒸发水位状态", Status, HILO_TEXTS),
+    spec!("aSWITCHA", "称重降水、蒸发加排水状态", Status,
+        &[("0", "正常"), ("1", "异常"), ("2", "故障"), ("3", "加水"), ("4", "排水"), ("5", "维护")]),
+    spec!("aTILT", "北斗设备倾斜角", Value, "°"),
+];
+
+/// 按状态编码查附录C定义；未定义的编码返回 None（不解析）
+pub fn status_item_spec(code: &str) -> Option<&'static StatusItemSpec> {
+    SPECS.iter().find(|s| s.code == code)
+}
+
+/// 状态编码对应的标准中文名
+pub fn status_item_name(code: &str) -> Option<&'static str> {
+    status_item_spec(code).map(|s| s.name)
+}
+
+/// 该状态项是否纳入解析（原 tm.c isKIT 的表驱动版本）
+pub fn is_kit(item: &str) -> bool {
+    status_item_spec(item).is_some()
+}
+
+fn lookup_text<'a>(texts: &'a [(&'a str, &'a str)], value: &str) -> Option<&'a str> {
+    let key: String = value.chars().take(1).collect();
+    texts.iter().find(|(k, _)| *k == key).map(|(_, t)| *t)
+}
+
+/// 判定状态项是否异常
+pub fn is_abnormal_value(spec: &StatusItemSpec, value: &str) -> bool {
+    match spec.kind {
+        Status => !(value == "0" || value == "0:0:0:0:0:0:0:0:0:0"),
+        // 等级型（tFB）：0 级最差，<=1 级视为信号差告警
+        Level => value.trim().parse::<i64>().map(|v| v <= 1).unwrap_or(false),
+        Value => false,
+    }
+}
+
+/// 生成状态项告警/展示文本
 pub fn get_alarm(item: &str, value: &str) -> String {
     if item.is_empty() || value.is_empty() {
         return String::new();
     }
 
-    // a-prefix named alarms (4-5 char codes)
-    if item.starts_with('a') && item.len() > 1 {
-        return match item {
-            "aCF" => match value.chars().next() {
-                Some('0') => "存储卡:正常".into(),
-                Some('1') => "存储卡:无卡".into(),
-                Some('2') => "存储卡:故障".into(),
-                _ => format!("[?{}={}]", item, value),
-            },
-            "aDOOR" => match value.chars().next() {
-                Some('0') => "机箱门:正常".into(),
-                Some('1') => "机箱门:异常".into(),
-                _ => format!("[?{}={}]", item, value),
-            },
-            "aLID" => match value.chars().next() {
-                Some('0') => "酸雨盖:正常".into(),
-                Some('1') => "酸雨盖:开启".into(),
-                _ => format!("[?{}={}]", item, value),
-            },
-            "aLEVEL" => match value.chars().next() {
-                Some('0') => "水位:正常".into(),
-                Some('3') => "水位:偏高".into(),
-                Some('4') => "水位:偏低".into(),
-                _ => format!("[?{}={}]", item, value),
-            },
-            "aSWITCH" => {
-                let c = value.chars().next().unwrap_or(' ');
-                if c == 'O' {
-                    if value.len() > 1 && value.as_bytes()[1] == b'N' {
-                        "水开关:开启".into()
-                    } else {
-                        "水开关:关闭".into()
-                    }
-                } else if c == 'N' {
-                    "水开关:无设备".into()
-                } else {
-                    format!("[?{}={}]", item, value)
+    let spec = match status_item_spec(item) {
+        Some(s) => s,
+        None => return format!("[?{}={}]", item, value),
+    };
+
+    match spec.kind {
+        Value => format!("{}:{}{}", spec.name, value, spec.unit),
+        Level => format!("{}:{}{}", spec.name, value, spec.unit),
+        Status => {
+            if !spec.texts.is_empty() {
+                match lookup_text(spec.texts, value) {
+                    Some(t) => format!("{}:{}", spec.name, t),
+                    // a 类命名项未取态值时保持原有 [?code=value] 风格
+                    None if item.starts_with('a') => format!("[?{}={}]", item, value),
+                    None => format!("{}:{}", spec.name, value),
                 }
-            }
-            "aSWITCHA" => match value.chars().next() {
-                Some('0') => "加排水:正常".into(),
-                Some('1') => "加排水:异常".into(),
-                Some('2') => "加排水:故障".into(),
-                Some('3') => "加排水:加水".into(),
-                Some('4') => "加排水:排水".into(),
-                Some('5') => "加排水:维护".into(),
-                _ => format!("[?{}={}]", item, value),
-            },
-            "aTILT" => format!("北斗设备倾斜角:{}度", value),
-            _ => format!("[?{}={}]", item, value),
-        };
-    }
-
-    // Single-char items (a, q, r, s, t, u, v, w, x, y, z)
-    fn single_prefix(c: char) -> &'static str {
-        match c {
-            'a' => "其他工作",
-            'q' => "分钟数据",
-            'r' => "采样数据",
-            's' => "污染状态",
-            't' => "通讯状态",
-            'u' => "通风部件",
-            'v' => "加热部件",
-            'w' => "温度状态",
-            'x' => "供电状态",
-            'y' => "测量仪",
-            'z' => "设备自检",
-            _ => "",
-        }
-    }
-
-    fn generic_suffix(v: char) -> &'static str {
-        match v {
-            '0' => "正常",
-            '1' => "异常",
-            '2' => "故障（未检测到）",
-            '3' => "偏高",
-            '4' => "偏低",
-            '5' => "超上限",
-            '6' => "超下限",
-            '7' => "预留",
-            '8' => "预留",
-            '9' => "未检查",
-            'N' => "关闭或无配置",
-            _ => "",
-        }
-    }
-
-    let is_single = item.len() == 1
-        && matches!(
-            item.as_bytes()[0],
-            b'a' | b'q' | b'r' | b's' | b't' | b'u' | b'v' | b'w' | b'x' | b'y' | b'z'
-        );
-    let is_yAB = item.len() == 2
-        && item.as_bytes()[0] == b'y'
-        && (item.as_bytes()[1] == b'A' || item.as_bytes()[1] == b'B');
-    let is_uABC = item.len() == 2
-        && item.as_bytes()[0] == b'u'
-        && item.as_bytes()[1] >= b'A'
-        && item.as_bytes()[1] <= b'C';
-
-    if is_single || is_yAB || is_uABC {
-        let prefix = if is_single {
-            single_prefix(item.as_bytes()[0] as char).to_string()
-        } else if is_yAB {
-            match item.as_bytes()[1] {
-                b'A' => "测量部分自检",
-                b'B' => "辅助设备自检",
-                _ => item,
-            }
-            .to_string()
-        } else {
-            match item.as_bytes()[1] {
-                b'A' => "设备通风",
-                b'B' => "发射器通风",
-                b'C' => "接收器通风",
-                _ => item,
-            }
-            .to_string()
-        };
-        let suffix = value.chars().next().map(generic_suffix).unwrap_or("");
-        return format!("{}:{}", prefix, suffix);
-    }
-
-    // Two-char kit items (tA-G except D, sA-H, qA-E, wA-B, xA-C)
-    if item.len() == 2 {
-        let bytes = item.as_bytes();
-        if bytes[0] == b't' && bytes[1] >= b'A' && bytes[1] <= b'G' {
-            let p = match bytes[1] {
-                b'A' => "设备到智能集成处理器通信状态",
-                b'B' => "总线状态",
-                b'C' => "串口通信状态",
-                b'D' => "网口通信状态",
-                b'E' => "鱼眼相机网口通信状态",
-                b'F' => "普通相机1网口通信状态",
-                b'G' => "普通相机2网口通信状态",
-                _ => item,
-            };
-            let s = if bytes[1] == b'D' {
-                value.chars().next().map(generic_suffix).unwrap_or("")
+            } else if !spec.unit.is_empty() {
+                // 无取值表但带单位（如 r 类次数）：原值+单位展示
+                format!("{}:{}{}", spec.name, value, spec.unit)
             } else {
-                match value.chars().next() {
-                    Some('0') => "正常",
-                    Some('1') => "故障",
-                    Some('2') => "未启用",
-                    _ => value,
+                match lookup_text(GENERIC_STATUS_TEXTS, value) {
+                    Some(t) => format!("{}:{}", spec.name, t),
+                    None => format!("{}:{}", spec.name, value),
                 }
-            };
-            return format!("{}:{}", p, s);
-        }
-        if bytes[0] == b's' && bytes[1] >= b'A' && bytes[1] <= b'H' {
-            let p = match bytes[1] {
-                b'A' => "窗口",
-                b'B' => "探测器",
-                b'C' => "镜头",
-                b'D' => "鱼眼镜头",
-                b'E' => "摄像头1",
-                b'F' => "摄像头2",
-                b'G' => "降水现象仪1窗口",
-                b'H' => "降水现象仪2窗口",
-                _ => item,
-            };
-            let s = match value.chars().next() {
-                Some('0') => "正常",
-                Some('1') => "一般污染",
-                Some('2') => "严重污染",
-                _ => value,
-            };
-            return format!("{}:{}", p, s);
-        }
-        if bytes[0] == b'q' && bytes[1] >= b'A' && bytes[1] <= b'E' {
-            let p = match bytes[1] {
-                b'A' => "当前设备输出分钟数据值不超上限",
-                b'B' => "当前设备输出分钟数据值不超下限",
-                b'C' => "当前设备输出分钟数据变化率不超限",
-                b'D' => "当前设备输出分钟数据(存疑)不超限",
-                b'E' => "当前设备输出分钟数据达到最小变化率",
-                _ => item,
-            };
-            let s = match value.chars().next() {
-                Some('0') => "是的（正常）",
-                Some('1') => "不是（错误）",
-                _ => value,
-            };
-            return format!("{}:{}", p, s);
-        }
-        if bytes[0] == b'w' && matches!(bytes[1], b'A' | b'B') {
-            let p = match bytes[1] {
-                b'A' => "电路板温度",
-                b'B' => "探测器温度",
-                _ => item,
-            };
-            return format!("{}:{}℃", p, value);
-        }
-        if bytes[0] == b'x' && matches!(bytes[1], b'A' | b'B' | b'C') {
-            let (p, unit) = match bytes[1] {
-                b'A' => ("供电类型", ""),
-                b'B' => ("外接电源电压", "伏"),
-                b'C' => ("蓄电池电压", "伏"),
-                _ => (item, ""),
-            };
-            return format!("{}:{}{}", p, value, unit);
-        }
-    }
-
-    // Three-char items
-    if item.len() == 3 {
-        let bytes = item.as_bytes();
-        // y[C-H,J]: tipping bucket etc
-        if bytes[0] == b'y' && ((bytes[1] >= b'C' && bytes[1] <= b'H') || bytes[1] == b'J') {
-            let p = match bytes[1] {
-                b'C' => "翻斗雨量",
-                b'D' => "筒口",
-                b'E' => "上翻斗",
-                b'F' => "计数翻斗",
-                b'G' => "计数翻斗1",
-                b'H' => "计数翻斗2",
-                b'J' => "颗粒物谱传感器",
-                _ => item,
-            };
-            let s = match value.chars().next() {
-                Some('0') => "正常",
-                Some('1') => "异常",
-                Some('2') => "堵塞",
-                _ => value,
-            };
-            return format!("{}:{}", p, s);
-        }
-        if bytes[0] == b'y' && bytes[1] == b'I' {
-            return match value.chars().next() {
-                Some('0') => "筒口:正常".into(),
-                Some('2') => "筒口:故障".into(),
-                _ => format!("筒口:{}", value),
-            };
-        }
-        if bytes[0] == b'y' && bytes[1] >= b'K' && bytes[1] <= b'M' {
-            let p = match bytes[1] {
-                b'K' => "鱼眼相机",
-                b'L' => "普通相机1",
-                b'M' => "普通相机2",
-                _ => item,
-            };
-            let s = match value.chars().next() {
-                Some('0') => "正常",
-                Some('1') => "可连接但无法拍照",
-                Some('2') => "无法连接",
-                _ => value,
-            };
-            return format!("{}:{}", p, s);
-        }
-        if bytes[0] == b'y' && bytes[1] == b'N' {
-            let v2 = value.as_bytes().get(1).copied().unwrap_or(b' ');
-            return match v2 {
-                b'N' => "智能电源:电源开启".into(),
-                b'F' => "智能电源:电源关闭".into(),
-                _ => format!("智能电源:{}", value),
-            };
-        }
-
-        // x-prefix power
-        if bytes[0] == b'x' && bytes[1] >= b'A' && bytes[1] <= b'H' {
-            let (p, unit) = match bytes[1] {
-                b'A' => ("供电类型", ""),
-                b'B' => ("外接电源电压", "伏"),
-                b'C' => ("蓄电池电压", "伏"),
-                b'D' => ("设备供电电压", "伏"),
-                b'E' => ("当前主板电压值", "伏"),
-                b'F' => ("当前工作电流", "毫安"),
-                b'G' => ("加热电源电压值", "伏"),
-                b'H' => ("蓄电池电量", "/100"),
-                _ => (item, ""),
-            };
-            return format!("{}:{}{}", p, value, unit);
-        }
-
-        // w-prefix temperature
-        if bytes[0] == b'w' {
-            let p = match bytes[1] {
-                b'A' => "电路板温度",
-                b'B' => "探测器温度",
-                b'C' => "腔体温度",
-                b'D' => "恒温器温度",
-                b'E' => "机箱温度",
-                _ => item,
-            };
-            return format!("{}:{}℃", p, value);
-        }
-
-        // v-prefix heating
-        if bytes[0] == b'v' {
-            let p = match bytes[1] {
-                b'A' => "设备加热开关状态",
-                b'B' => "发射器加热开关状态",
-                b'C' => "接收器加热开关状态",
-                b'D' => "相机加热开关状态",
-                b'E' => "鱼眼摄像机加热开关状态",
-                b'F' => "普通摄像机1加热开关状态",
-                b'G' => "普通摄像机2加热开关状态",
-                b'H' => "风速加热开关状态",
-                b'I' => "风向加热开关状态",
-                _ => item,
-            };
-            return format!("{}:{}", p, value);
-        }
-
-        // u-prefix ventilation
-        if bytes[0] == b'u' {
-            let (p, unit) = match bytes[1] {
-                b'D' => ("通风罩通风速度", "(m/s)"),
-                b'E' => ("通风罩转速", "(r/min)"),
-                _ => (item, ""),
-            };
-            return format!("{}:{}{}", p, value, unit);
-        }
-
-        // t-prefix communication
-        if bytes[0] == b't' {
-            let p = match bytes[1] {
-                b'A' => "设备到智能集成处理器通信状态",
-                b'B' => "总线状态",
-                b'C' => "串口通信状态",
-                b'D' => "网口通信状态",
-                b'E' => "鱼眼相机网口通信状态",
-                b'F' => "普通相机1网口通信状态",
-                b'G' => "普通相机2网口通信状态",
-                _ => item,
-            };
-            let s = match value.chars().next() {
-                Some('0') => "正常",
-                Some('1') => "故障",
-                Some('2') => "未启用",
-                _ => value,
-            };
-            return format!("{}:{}", p, s);
-        }
-
-        // s-prefix pollution
-        if bytes[0] == b's' {
-            let p = match bytes[1] {
-                b'A' => "窗口",
-                b'B' => "探测器",
-                b'C' => "镜头",
-                b'D' => "鱼眼镜头",
-                b'E' => "摄像头1",
-                b'F' => "摄像头2",
-                b'G' => "降水现象仪1窗口",
-                b'H' => "降水现象仪2窗口",
-                _ => item,
-            };
-            let s = match value.chars().next() {
-                Some('0') => "正常",
-                Some('1') => "一般污染",
-                Some('2') => "严重污染",
-                _ => value,
-            };
-            return format!("{}:{}", p, s);
-        }
-
-        // r-prefix sampling
-        if bytes[0] == b'r' {
-            let p = match bytes[1] {
-                b'A' => "分钟采样值超上限次数",
-                b'B' => "分钟采样值超下限次数",
-                b'C' => "分钟采样值跳变超限次数",
-                _ => item,
-            };
-            return format!("{}:{}", p, value);
-        }
-
-        // q-prefix minute data
-        if bytes[0] == b'q' {
-            let p = match bytes[1] {
-                b'A' => "当前设备输出分钟数据值不超上限",
-                b'B' => "当前设备输出分钟数据值不超下限",
-                b'C' => "当前设备输出分钟数据变化率不超限",
-                b'D' => "当前设备输出分钟数据(存疑)不超限",
-                b'E' => "当前设备输出分钟数据达到最小变化率",
-                _ => item,
-            };
-            let s = match value.chars().next() {
-                Some('0') => "是的（正常）",
-                Some('1') => "不是（错误）",
-                _ => value,
-            };
-            return format!("{}:{}", p, s);
-        }
-    }
-
-    // Four-char items: xEA, xFA, xGA, wAA, wCA, vAA..vKA, uDA, uEA, tDA..tDC, tFA..tFC
-    if item.len() == 4 {
-        let bytes = item.as_bytes();
-        if bytes[2] == b'A' {
-            if bytes[0] == b'x' {
-                let p = match bytes[1] {
-                    b'E' => "主板电压",
-                    b'F' => "工作电流",
-                    b'G' => "加热电压",
-                    _ => item,
-                };
-                let s = match value.chars().next() {
-                    Some('0') => "正常",
-                    Some('3') => "偏高",
-                    Some('4') => "偏低",
-                    _ => value,
-                };
-                return format!("{}:{}", p, s);
-            }
-            if bytes[0] == b'w' {
-                let p = match bytes[1] {
-                    b'A' => "电路板温度",
-                    b'C' => "腔体温度",
-                    _ => item,
-                };
-                let s = match value.chars().next() {
-                    Some('0') => "正常",
-                    Some('3') => "偏高",
-                    Some('4') => "偏低",
-                    _ => value,
-                };
-                return format!("{}:{}", p, s);
-            }
-            if bytes[0] == b'v' {
-                let p = match bytes[1] {
-                    b'A' => "设备加热",
-                    b'B' => "发射器加热",
-                    b'C' => "接收器加热",
-                    b'D' => "相机加热",
-                    b'E' => "鱼眼相机加热",
-                    b'F' => "摄像机1加热",
-                    b'G' => "摄像机2加热",
-                    b'H' => "风速加热",
-                    b'I' => "风向加热",
-                    b'J' => "降水现象仪通道1加热",
-                    b'K' => "降水现象仪通道2加热",
-                    _ => item,
-                };
-                let s = match value.chars().next() {
-                    Some('0') => "正常",
-                    Some('1') => "异常",
-                    Some('2') => "故障",
-                    Some('3') => "偏高",
-                    Some('4') => "偏低",
-                    Some('5') => "停止",
-                    _ => value,
-                };
-                return format!("{}:{}", p, s);
-            }
-            if bytes[0] == b'u' {
-                let p = match bytes[1] {
-                    b'D' => "通风罩通风",
-                    b'E' => "通风罩转速",
-                    _ => item,
-                };
-                let s = match value.chars().next() {
-                    Some('0') => "正常",
-                    Some('1') => "异常",
-                    Some('2') => "故障",
-                    Some('3') => "偏高",
-                    Some('4') => "偏低",
-                    _ => value,
-                };
-                return format!("{}:{}", p, s);
             }
         }
-        // tDA..tDC
-        if bytes[0] == b't' && bytes[1] == b'D' {
-            let p = match bytes[2] {
-                b'A' => "鱼眼摄像机网口",
-                b'B' => "普通摄像机1网口",
-                b'C' => "普通摄像机2网口",
-                _ => item,
-            };
-            let s = match value.chars().next() {
-                Some('0') => "正常",
-                Some('1') => "故障",
-                Some('2') => "未启用",
-                _ => value,
-            };
-            return format!("{}:{}", p, s);
-        }
-        // tFA..tFC
-        if bytes[0] == b't' && bytes[1] == b'F' {
-            let p = match bytes[2] {
-                b'A' => "无线信号强度",
-                b'B' => "无线信号强度",
-                b'C' => "无线连接状态",
-                _ => item,
-            };
-            return match bytes[2] {
-                b'A' => format!("{}:{} dBm", p, value),
-                b'B' => format!("{}:{} 级", p, value),
-                b'C' => {
-                    let s = match value.chars().next() {
-                        Some('0') => "正常",
-                        Some('7') => "物理链接断开",
-                        Some('8') => "逻辑链路断开",
-                        _ => value,
-                    };
-                    format!("{}:{}", p, s)
-                }
-                _ => format!("{}:{}", p, value),
-            };
-        }
     }
-
-    format!("[?{}={}]", item, value)
-}
-
-/// Port of isKIT() from tm.c
-pub fn is_kit(item: &str) -> bool {
-    if item.is_empty() {
-        return false;
-    }
-    let bytes = item.as_bytes();
-    // 1-char: a, q-z
-    if item.len() == 1 {
-        return matches!(
-            bytes[0],
-            b'a' | b'q' | b'r' | b's' | b't' | b'u' | b'v' | b'w' | b'x' | b'y' | b'z'
-        );
-    }
-    // Named alarms (check before 3-char to avoid aCF being caught by length-3 branch)
-    if matches!(item, "aCF" | "aDOOR" | "aLID" | "aLEVEL" | "aSWITCHA") {
-        return true;
-    }
-    // 2-char
-    if item.len() == 2 {
-        if bytes[0] == b'y' && bytes[1] >= b'A' && bytes[1] <= b'M' {
-            return true;
-        }
-        if bytes[0] == b's' && bytes[1] >= b'A' && bytes[1] <= b'H' {
-            return true;
-        }
-        if bytes[0] == b'q' && bytes[1] >= b'A' && bytes[1] <= b'E' {
-            return true;
-        }
-        if bytes[0] == b'u' && bytes[1] >= b'A' && bytes[1] <= b'C' {
-            return true;
-        }
-        if bytes[0] == b't' && bytes[1] >= b'A' && bytes[1] <= b'G' && bytes[1] != b'D' {
-            return true;
-        }
-        if bytes[0] == b'w' && matches!(bytes[1], b'A' | b'B') {
-            return true;
-        }
-        if bytes[0] == b'x' && matches!(bytes[1], b'A' | b'B' | b'C') {
-            return true;
-        }
-        return false;
-    }
-    // 3-char
-    if item.len() == 3 {
-        if bytes[0] == b'x' && matches!(bytes[1], b'E' | b'F' | b'G') && bytes[2] == b'A' {
-            return true;
-        }
-        if bytes[0] == b'w' && matches!(bytes[1], b'A' | b'C') && bytes[2] == b'A' {
-            return true;
-        }
-        if bytes[0] == b'v' && bytes[1] >= b'A' && bytes[1] <= b'K' && bytes[2] == b'A' {
-            return true;
-        }
-        if bytes[0] == b'u' && matches!(bytes[1], b'D' | b'E') && bytes[2] == b'A' {
-            return true;
-        }
-        if bytes[0] == b't' && bytes[1] == b'D' && bytes[2] >= b'A' && bytes[2] <= b'C' {
-            return true;
-        }
-        if bytes[0] == b't' && bytes[1] == b'F' && bytes[2] == b'C' {
-            return true;
-        }
-        return false;
-    }
-    false
-}
-
-/// 数值型项目（非 0=正常 的状态项）：温度、电压、供电类型等。
-/// 这些项目的值本身不是故障指示，永远不应标记为异常（与 tm.c 的 isKIT 口径一致，
-/// 原版 2 字符分支不包含 wA/wB、xA/xB/xC）。
-fn is_value_item(item: &str) -> bool {
-    let bytes = item.as_bytes();
-    if item.len() != 2 {
-        return false;
-    }
-    (bytes[0] == b'w' && matches!(bytes[1], b'A' | b'B'))
-        || (bytes[0] == b'x' && matches!(bytes[1], b'A' | b'B' | b'C'))
 }
 
 /// Parse ST packet - port of the parsing loop from tm.c
@@ -633,10 +299,10 @@ pub fn parse_st_packet(data: &str) -> Vec<CheckItem> {
             }
         }
 
-        if is_kit(item) {
-            // 数值型项目（温度/电压/供电类型）只展示数值，不参与异常判定
-            let is_abnormal = !is_value_item(item)
-                && !(value == "0" || value == "0:0:0:0:0:0:0:0:0:0");
+        if let Some(spec) = status_item_spec(item) {
+            // 数值型项目（温度/电压/供电类型等）只展示数值，不参与异常判定；
+            // 等级型项目（tFB）按等级阈值判定
+            let is_abnormal = is_abnormal_value(spec, value);
             let alarm_text = if is_abnormal {
                 get_alarm(item, value)
             } else {

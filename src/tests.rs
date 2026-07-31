@@ -17,40 +17,40 @@ mod tests {
 
     #[test]
     fn test_get_alarm_storage_card() {
-        assert_eq!(get_alarm("aCF", "0"), "存储卡:正常");
-        assert_eq!(get_alarm("aCF", "1"), "存储卡:无卡");
-        assert_eq!(get_alarm("aCF", "2"), "存储卡:故障");
+        assert_eq!(get_alarm("aCF", "0"), "存储卡状态:正常");
+        assert_eq!(get_alarm("aCF", "1"), "存储卡状态:无卡");
+        assert_eq!(get_alarm("aCF", "2"), "存储卡状态:故障");
         assert_eq!(get_alarm("aCF", "9"), "[?aCF=9]");
     }
 
     #[test]
     fn test_get_alarm_door() {
-        assert_eq!(get_alarm("aDOOR", "0"), "机箱门:正常");
-        assert_eq!(get_alarm("aDOOR", "1"), "机箱门:异常");
+        assert_eq!(get_alarm("aDOOR", "0"), "机箱门状态:正常");
+        assert_eq!(get_alarm("aDOOR", "1"), "机箱门状态:异常");
     }
 
     #[test]
     fn test_get_alarm_single_char() {
-        assert_eq!(get_alarm("a", "0"), "其他工作:正常");
-        assert_eq!(get_alarm("a", "1"), "其他工作:异常");
-        assert_eq!(get_alarm("t", "0"), "通讯状态:正常");
-        assert_eq!(get_alarm("t", "1"), "通讯状态:异常");
-        assert_eq!(get_alarm("w", "0"), "温度状态:正常");
-        assert_eq!(get_alarm("x", "0"), "供电状态:正常");
-        assert_eq!(get_alarm("s", "0"), "污染状态:正常");
+        assert_eq!(get_alarm("a", "0"), "其他工作类状态:正常");
+        assert_eq!(get_alarm("a", "1"), "其他工作类状态:异常");
+        assert_eq!(get_alarm("t", "0"), "通信类状态:正常");
+        assert_eq!(get_alarm("t", "1"), "通信类状态:异常");
+        assert_eq!(get_alarm("w", "0"), "工作温度类状态:正常");
+        assert_eq!(get_alarm("x", "0"), "供电类状态:正常");
+        assert_eq!(get_alarm("s", "0"), "污染类状态:正常");
     }
 
     #[test]
     fn test_get_alarm_two_char() {
-        assert_eq!(get_alarm("yA", "0"), "测量部分自检:正常");
-        assert_eq!(get_alarm("yB", "0"), "辅助设备自检:正常");
+        assert_eq!(get_alarm("yA", "0"), "测量仪测量部分自检状态:正常");
+        assert_eq!(get_alarm("yB", "0"), "测量仪辅助设施自检状态:正常");
         assert_eq!(get_alarm("uA", "0"), "设备通风:正常");
-        assert_eq!(get_alarm("uB", "0"), "发射器通风:正常");
+        assert_eq!(get_alarm("uB", "0"), "发射器通风状态:正常");
     }
 
     #[test]
     fn test_get_alarm_temperature() {
-        assert_eq!(get_alarm("wA", "25.5"), "电路板温度:25.5℃");
+        assert_eq!(get_alarm("wA", "25.5"), "内部电路温度:25.5℃");
         assert_eq!(get_alarm("wB", "30.0"), "探测器温度:30.0℃");
     }
 
@@ -65,15 +65,40 @@ mod tests {
     fn test_get_alarm_communication() {
         assert_eq!(get_alarm("tA", "0"), "设备到智能集成处理器通信状态:正常");
         assert_eq!(get_alarm("tB", "0"), "总线状态:正常");
-        assert_eq!(get_alarm("tC", "1"), "串口通信状态:故障");
-        assert_eq!(get_alarm("tD", "0"), "网口通信状态:正常");
+        assert_eq!(get_alarm("tC", "1"), "RS232/485/422通信状态:故障");
+        assert_eq!(get_alarm("tD", "0"), "RJ45/LAN通信状态:正常");
+        // 报批稿新版：tE/tF/tG 为卫星/无线/光纤通信状态
+        assert_eq!(get_alarm("tE", "0"), "卫星通信状态:正常");
+        assert_eq!(get_alarm("tF", "1"), "无线通信状态:故障");
+        assert_eq!(get_alarm("tG", "2"), "光纤通信状态:未启用");
+        // tFC 无线连接状态：7/8 为链路断开
+        assert_eq!(get_alarm("tFC", "7"), "无线连接状态:物理链接断开");
+        assert_eq!(get_alarm("tFC", "8"), "无线连接状态:逻辑链路断开");
+        // tFA 数值型 dBm / tFB 等级
+        assert_eq!(get_alarm("tFA", "-50"), "无线信号强度:-50dBm");
+        assert_eq!(get_alarm("tFB", "4"), "无线信号强度状态:4级");
     }
 
     #[test]
     fn test_get_alarm_pollution() {
-        assert_eq!(get_alarm("sA", "0"), "窗口:正常");
-        assert_eq!(get_alarm("sB", "1"), "探测器:一般污染");
-        assert_eq!(get_alarm("sC", "2"), "镜头:严重污染");
+        assert_eq!(get_alarm("sA", "0"), "窗口污染情况:正常");
+        assert_eq!(get_alarm("sB", "1"), "探测器污染情况:一般污染");
+        assert_eq!(get_alarm("sC", "2"), "相机镜头污染情况:严重污染");
+    }
+
+    #[test]
+    fn test_get_alarm_misc_items() {
+        // 状态量（带专用取值表）
+        assert_eq!(get_alarm("xEA", "3"), "主板电压状态:偏高");
+        assert_eq!(get_alarm("yI", "2"), "泵状态:故障");
+        assert_eq!(get_alarm("vAA", "5"), "设备加热状态:加热停止");
+        // 数值型新项目
+        assert_eq!(get_alarm("xD", "12.6"), "设备供电电压:12.6伏");
+        assert_eq!(get_alarm("wD", "18.0"), "恒温器温度:18.0℃");
+        assert_eq!(get_alarm("uD", "2.5"), "通风罩通风速度:2.5m/s");
+        assert_eq!(get_alarm("aTILT", "3"), "北斗设备倾斜角:3°");
+        // r 类次数
+        assert_eq!(get_alarm("rA", "3"), "当前分钟采样值超上限次数:3次");
     }
 
     #[test]
@@ -112,7 +137,7 @@ mod tests {
         assert!(is_kit("uA"));
         assert!(is_kit("uC"));
         assert!(is_kit("tA"));
-        assert!(!is_kit("tD")); // tD is 3-char
+        assert!(is_kit("tD")); // 报批稿：tD 为 RJ45/LAN 通信状态，纳入解析
         assert!(!is_kit("yN"));
         assert!(!is_kit("zA"));
     }
@@ -203,6 +228,39 @@ mod tests {
         let data = "ST,001,001,2024,01,01,00,unknown,1,other,2";
         let result = parse_st_packet(data);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_st_packet_new_item_kinds() {
+        // tFB 等级型：0-1 级（信号差）判异常；tFA/xD 数值型不判异常；tFC=7 判异常
+        let data = "ST,001,001,2024,01,01,00,tF,0,tFA,-50,tFB,0,tFC,7,xD,12.6,wD,18.0";
+        let result = parse_st_packet(data);
+
+        let tfb = result.iter().find(|r| r.item == "tFB").unwrap();
+        assert!(tfb.abnormal); // 0 级信号最差
+        assert_eq!(tfb.alarm, "无线信号强度状态:0级");
+
+        let tfa = result.iter().find(|r| r.item == "tFA").unwrap();
+        assert!(!tfa.abnormal); // dBm 数值不告警
+
+        let tfc = result.iter().find(|r| r.item == "tFC").unwrap();
+        assert!(tfc.abnormal);
+        assert_eq!(tfc.alarm, "无线连接状态:物理链接断开");
+
+        let xd = result.iter().find(|r| r.item == "xD").unwrap();
+        assert!(!xd.abnormal);
+
+        let wd = result.iter().find(|r| r.item == "wD").unwrap();
+        assert!(!wd.abnormal);
+    }
+
+    #[test]
+    fn test_parse_st_packet_tfb_normal_level() {
+        // tFB 4 级信号良好，不判异常
+        let data = "ST,001,001,2024,01,01,00,tFB,4";
+        let result = parse_st_packet(data);
+        let tfb = result.iter().find(|r| r.item == "tFB").unwrap();
+        assert!(!tfb.abnormal);
     }
 
     // === get_station_index tests ===
