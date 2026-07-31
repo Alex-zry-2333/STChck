@@ -201,13 +201,17 @@ http://localhost:8080/forecast # AI 预报页面
 | `GET /api/station/{id}`                               | -    | 站点详情 JSON                 |
 | `GET /api/top`                                        | -    | Top 重点关注站点 JSON         |
 | `GET /api/map/stations`                               | -    | 🗺️ 地图站点数据（含经纬度） |
-| `GET /api/station/{id}/devices`                       | -    | 站内设备状态 JSON             |
+| `GET /api/station/{id}/devices`                       | -    | 站内设备状态 JSON（含 `raw_data` 原始 ST 报文，用于追溯解析） |
 | `GET /api/devices/events`                             | -    | 设备状态 SSE 推送             |
 | `GET /api/chart/alarms?hours=24`                      | -    | 报警趋势图数据                |
 | `GET /api/chart/values?station=50936&item=wA&hours=6` | -    | 设备数值曲线数据              |
 | `GET /api/events`                                     | -    | SSE 实时推送流                |
 | `GET /api/forecast`                                   | -    | 设备运行状态 AI 预报列表      |
 | `GET /api/forecast/{id}`                              | -    | 单站点 AI 预报详情            |
+
+### 原始 ST 数据追溯
+
+`/api/station/{id}/devices` 返回的每个设备对象包含 `raw_data` 字段，内容为该设备当前分钟的完整 ST 报文（如 `DATADICK,V202201,50936,YSDRA00,N01,ST,20260730165500,z,0,rA,0,...,ED`）。设备详情页（`/station/{id}/devices`）右侧面板顶部的「原始 ST 数据」折叠栏会展示该报文，按逗号分段并将状态编码名（`rA`、`tFB`、`wA` 等）高亮，便于与下方状态卡片逐项对照、追溯解析是否正确。状态编码含义以《地面气象要素编码与数据格式》附录 C 为准。
 
 ### AI 预报交互时序
 
