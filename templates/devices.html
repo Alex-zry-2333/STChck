@@ -132,6 +132,28 @@ body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system,
 .section { margin-bottom: 24px; }
 .section-title { font-size: 14px; font-weight: 600; color: var(--text-secondary); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 .section-title::before { content: ''; display: inline-block; width: 4px; height: 12px; background: var(--primary); border-radius: 2px; }
+
+/* 原始 ST 数据追溯栏 */
+.raw-st { margin-bottom: 24px; border: 1px solid var(--border); border-radius: var(--radius-sm, 8px); background: var(--bg); overflow: hidden; }
+.raw-st summary {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; cursor: pointer; user-select: none;
+  font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  list-style: none;
+}
+.raw-st summary::before { content: ''; display: inline-block; width: 4px; height: 12px; background: var(--primary); border-radius: 2px; }
+.raw-st summary::-webkit-details-marker { display: none; }
+.raw-st summary .raw-toggle { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.raw-st[open] summary .raw-toggle::after { content: ' ▲'; }
+.raw-st summary .raw-toggle::after { content: ' ▼'; }
+.raw-st .raw-body {
+  padding: 10px 14px 14px;
+  font-family: Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.7;
+  color: var(--text-primary); word-break: break-all; white-space: pre-wrap;
+  border-top: 1px dashed var(--border);
+  max-height: 180px; overflow-y: auto;
+}
+.raw-st .raw-body .raw-kv { color: var(--primary); }
 .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
 .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
 .empty-state p { font-size: 14px; }
@@ -301,6 +323,25 @@ function renderDetail(device) {
 
   let html = '';
   const fallbackClass = device.is_fallback ? 'fallback' : '';
+
+  // 原始 ST 数据追溯栏：展开可对照下方解析结果
+  if (device.raw_data) {
+    const parts = String(device.raw_data).split(',');
+    // 头 7 段为帧头，之后为 编码,值 对，逐对高亮编码便于对照下方状态卡片
+    let bodyHtml = '';
+    parts.forEach((p, idx) => {
+      const esc = escHtml(p);
+      if (idx >= 7 && (idx - 7) % 2 === 0) {
+        bodyHtml += '<span class="raw-kv">' + esc + '</span>,';
+      } else {
+        bodyHtml += esc + (idx < parts.length - 1 ? ',' : '');
+      }
+    });
+    html += '<details class="raw-st">' +
+      '<summary>原始 ST 数据（点击展开，追溯解析是否正确）<span class="raw-toggle">' + escHtml(device.last_data_time || '') + '</span></summary>' +
+      '<div class="raw-body">' + bodyHtml + '</div>' +
+    '</details>';
+  }
 
   if (device.common_status && device.common_status.length > 0) {
     html += '<div class="section"><div class="section-title">共有状态</div><div class="status-grid">' +

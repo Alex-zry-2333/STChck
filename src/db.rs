@@ -911,6 +911,7 @@ impl DbService {
                     last_data_time: data_time.format("%Y-%m-%d %H:%M:%S").to_string(),
                     is_online,
                     is_fallback,
+                    raw_data: row.data,
                     common_status,
                     specific_status,
                 });
@@ -1004,6 +1005,7 @@ impl DbService {
                     last_data_time: data_time.format("%Y-%m-%d %H:%M:%S").to_string(),
                     is_online,
                     is_fallback,
+                    raw_data: data,
                     common_status,
                     specific_status,
                 });
@@ -1102,6 +1104,7 @@ impl DbService {
                 last_data_time: row.data_time.format("%Y-%m-%d %H:%M:%S").to_string(),
                 is_online,
                 is_fallback,
+                raw_data: row.data,
                 common_status,
                 specific_status,
             });

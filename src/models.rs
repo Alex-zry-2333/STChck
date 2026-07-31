@@ -159,6 +159,8 @@ pub struct DeviceStatusInfo {
     pub last_data_time: String,
     pub is_online: bool,
     pub is_fallback: bool,
+    /// 原始 ST 数据包（用于追溯状态解析是否正确）
+    pub raw_data: String,
     pub common_status: Vec<DeviceStatusItem>,
     pub specific_status: Vec<DeviceStatusItem>,
 }
