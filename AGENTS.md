@@ -252,7 +252,7 @@ $env:CLOUD_DB_PASSWORD="实际密码"
 | `GET /api/station/{id}` | 单个站点详情 |
 | `GET /api/top?limit=N` | 各类 Top N 站点 |
 | `GET /api/map/stations` | 地图展示所需站点元数据与状态 |
-| `GET /api/station/{id}/devices` | 站点设备状态 |
+| `GET /api/station/{id}/devices` | 站点设备状态（含 `raw_data` 原始 ST 报文，详情页顶部折叠栏用于追溯解析） |
 | `GET /api/devices/events` | 设备状态 SSE 流 |
 | `GET /api/chart/alarms?hours=24` | 告警趋势图数据 |
 | `GET /api/chart/values?station=50936&item=wA&hours=6` | 设备数值曲线数据 |
