@@ -1003,7 +1003,6 @@ fn forecast_advice(status: &StationStatus, level: &str) -> String {
     }
 }
 
-
 // ==================== 时间段监察（time-range inspection） ====================
 
 /// ST 包定点解析（D10）：与 parse_st_packet 语义等价，但不做全字段物化。
@@ -1069,7 +1068,10 @@ pub fn merge_gap_intervals(
     let present_minutes: std::collections::HashSet<i64> = present
         .iter()
         .map(|t| {
-            let m = t.with_second(0).and_then(|x| x.with_nanosecond(0)).unwrap_or(*t);
+            let m = t
+                .with_second(0)
+                .and_then(|x| x.with_nanosecond(0))
+                .unwrap_or(*t);
             (m - start_min).num_minutes()
         })
         .collect();
@@ -1242,7 +1244,8 @@ mod tests {
 
     #[test]
     fn gap_merge_basic() {
-        let start = NaiveDateTime::parse_from_str("2026-08-07 10:00:30", "%Y-%m-%d %H:%M:%S").unwrap();
+        let start =
+            NaiveDateTime::parse_from_str("2026-08-07 10:00:30", "%Y-%m-%d %H:%M:%S").unwrap();
         // 10:00:30 截断到 10:00；期望 10 分钟网格 10:00~10:09
         // 实有：10:00, 10:01, 10:05, 10:09 → 缺 10:02~10:04（3 分钟）、10:06~10:08（3 分钟）
         let present = vec![
@@ -1263,7 +1266,8 @@ mod tests {
 
     #[test]
     fn gap_merge_edge_cases() {
-        let start = NaiveDateTime::parse_from_str("2026-08-07 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let start =
+            NaiveDateTime::parse_from_str("2026-08-07 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
         // 全部缺报
         let gaps = merge_gap_intervals(&[], start, 5);
         assert_eq!(gaps.len(), 1);
@@ -1271,9 +1275,7 @@ mod tests {
         // 零长度时段
         assert!(merge_gap_intervals(&[], start, 0).is_empty());
         // 全部到报
-        let present: Vec<NaiveDateTime> = (0..5)
-            .map(|k| start + Duration::minutes(k))
-            .collect();
+        let present: Vec<NaiveDateTime> = (0..5).map(|k| start + Duration::minutes(k)).collect();
         assert!(merge_gap_intervals(&present, start, 5).is_empty());
     }
 }

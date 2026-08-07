@@ -19,12 +19,12 @@ use axum::{
     routing::get,
     Router,
 };
+use chrono::Timelike;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use chrono::Timelike;
 use tokio::sync::{broadcast, RwLock};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
@@ -1361,14 +1361,8 @@ async fn api_inspection_alarms(
         rows.truncate(limit as usize);
     }
     let next_cursor = if has_more {
-        rows.last().map(|r| {
-            format!(
-                "{}|{}|{}",
-                r.0.format("%Y-%m-%d %H:%M:%S"),
-                r.1,
-                r.2
-            )
-        })
+        rows.last()
+            .map(|r| format!("{}|{}|{}", r.0.format("%Y-%m-%d %H:%M:%S"), r.1, r.2))
     } else {
         None
     };

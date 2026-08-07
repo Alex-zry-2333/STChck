@@ -171,7 +171,9 @@ impl DbService {
                     )
                 }
                 None => {
-                    tracing::warn!("data_source = doris 但未配置 [doris] 段，回退到 MySQL 主库配置");
+                    tracing::warn!(
+                        "data_source = doris 但未配置 [doris] 段，回退到 MySQL 主库配置"
+                    );
                     (
                         format!(
                             "mysql://{}:{}@{}:{}/{}",
@@ -575,19 +577,17 @@ impl DbService {
                 quote_ids(&ids)
             );
 
-            let rows: Vec<(String, Option<String>)> = match sqlx::query_as::<
-                _,
-                (String, Option<String>),
-            >(&sql)
-            .fetch_all(pool)
-            .await
-            {
-                Ok(rows) => rows,
-                Err(e) => {
-                    tracing::warn!("Doris 加载 station_info 失败: {}", e);
-                    Vec::new()
-                }
-            };
+            let rows: Vec<(String, Option<String>)> =
+                match sqlx::query_as::<_, (String, Option<String>)>(&sql)
+                    .fetch_all(pool)
+                    .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        tracing::warn!("Doris 加载 station_info 失败: {}", e);
+                        Vec::new()
+                    }
+                };
 
             let info_map: HashMap<String, String> = rows
                 .into_iter()
@@ -610,7 +610,8 @@ impl DbService {
                         }
                         st.name.clone()
                     }
-                };                result.insert(
+                };
+                result.insert(
                     st.id.clone(),
                     StationMeta {
                         station_id: st.id.clone(),
@@ -1683,7 +1684,11 @@ impl DbService {
                 Some(p) => p,
                 None => return Vec::new(),
             };
-            let placeholders = station_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let placeholders = station_ids
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
             let sql = format!(
                 "SELECT station_num, device_type, device_nid, COUNT(*), \
                  MIN(data_time), MAX(data_time) \

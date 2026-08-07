@@ -198,7 +198,6 @@ pub struct ForecastDetail {
     pub generated_at: String,
 }
 
-
 // ==================== 时间段监察（time-range inspection） ====================
 
 /// 连续缺报分钟合并后的缺报区间
