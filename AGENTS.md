@@ -52,9 +52,17 @@ weather-monitor/
 ├── src/
 │   ├── main.rs             # Axum 路由、SSE、后台任务、启动逻辑
 │   ├── config.rs           # TOML 配置结构体与加载
-│   ├── db.rs               # 数据库服务：MySQL / SQLite / 模拟数据
+│   ├── db.rs               # 数据库服务：MySQL / Doris / SQLite / 模拟数据
 │   ├── monitor.rs          # 业务逻辑核心：ST 包解析、告警文本、模拟数据
 │   └── models.rs           # 全部数据结构定义（JSON 响应/SSE 负载）
+├── vendor/
+│   └── sqlx-mysql/         # sqlx-mysql 0.8.6 本地补丁（[patch.crates-io]），
+│                           # 兼容 Doris FE 的 10 字节 PrepareOk，必须随仓库提交
+├── examples/
+│   └── doris_probe.rs      # Doris 连接诊断探针（DORIS_URL 环境变量传入连接串）
+├── docs/
+│   ├── roles/              # 角色提示词（架构师/数据库工程师/测试工程师工作流）
+│   └── doris-support-design.md  # Doris 支持设计文档与联调记录
 ├── templates/
 │   ├── dashboard.html      # 主监控仪表盘（ECharts + SSE）
 │   └── devices.html        # 站内设备状态详情页
@@ -147,9 +155,18 @@ user = "root"
 password = "${CLOUD_DB_PASSWORD}"  # 会被 CLOUD_DB_PASSWORD 环境变量覆盖
 db = "cammoc_cloud_w"
 
+# 可选：Doris 数据源（仅真实模式且 data_source = "doris" 时生效）
+# [doris]
+# host = "10.10.1.60"
+# port = 9030                    # Doris FE MySQL 协议查询端口
+# user = "root"
+# password = "${DORIS_DB_PASSWORD}"  # 会被 DORIS_DB_PASSWORD 环境变量覆盖
+# db = "cammoc_w"
+
 [monitor]
 check_interval_minutes = 5     # 查询最近 N 分钟的数据
 simulation_mode = true         # true=模拟模式，false=真实数据库模式
+data_source = "mysql"          # 真实模式数据源：mysql（默认）或 doris
 
 [[stations]]                   # 可重复，定义监控站点列表
 id = "50936"
@@ -165,18 +182,21 @@ vendor = "华云"
 # Linux/macOS
 export DB_PASSWORD="实际密码"
 export CLOUD_DB_PASSWORD="实际密码"
+export DORIS_DB_PASSWORD="实际密码"   # 仅使用 Doris 数据源时需要
 
 # Windows PowerShell
 $env:DB_PASSWORD="实际密码"
 $env:CLOUD_DB_PASSWORD="实际密码"
+$env:DORIS_DB_PASSWORD="实际密码"     # 仅使用 Doris 数据源时需要
 ```
 
-`src/main.rs` 启动时会读取这两个环境变量并覆盖配置文件中的密码。
+`src/main.rs` 启动时会读取这些环境变量并覆盖配置文件中的密码。
 
 ### 5.3 模式切换
 
 - 模拟模式：`simulation_mode = true`（默认），会创建 `test_data.db`，不连接生产 MySQL。
-- 真实模式：`simulation_mode = false`，并正确设置数据库环境变量。
+- 真实模式（MySQL）：`simulation_mode = false`，`data_source = "mysql"`（默认），并正确设置数据库环境变量。
+- 真实模式（Doris）：`simulation_mode = false`，`data_source = "doris"`，配置 `[doris]` 段并设置 `DORIS_DB_PASSWORD`。Doris 走 MySQL 协议（FE 查询端口默认 9030），SQL 参数经校验/转义后内联走文本协议；连接失败自动降级为模拟模式。
 
 ---
 
@@ -289,6 +309,8 @@ $env:CLOUD_DB_PASSWORD="实际密码"
 
 - **严禁**字符串拼接 SQL。所有动态参数必须使用 `?` 占位符 + `bind()`。
 - `IN` 列表的动态长度通过循环 `bind` 实现，参考 `db.rs::load_station_meta` 和 `query_monitor_data`。
+- **Doris 路径例外**（见 `docs/doris-support-design.md` 附录 A）：Doris 查询参数经校验/转义后内联（`valid_interval_minutes` 钳制整数、`sql_escape` 转义字符串），且一律使用**位置元组解码**（Doris 列元数据与 sqlx 按名取列不兼容）；连接必须用 `pipes_as_concat(false)` + `no_engine_substitution(false)` + `timezone(None)`。
+- Doris 兼容性依赖 `vendor/sqlx-mysql` 本地补丁（PrepareOk 10 字节兼容），**不得删除 `vendor/` 目录或 `[patch.crates-io]` 配置**。
 
 ### 8.4 密码与敏感信息
 

@@ -1,11 +1,11 @@
-use crate::config::{DatabaseConfig, StationConfig};
+use crate::config::{DatabaseConfig, DorisConfig, StationConfig};
 use crate::models::{
     DeviceStatusInfo, DeviceStatusItem, MonitorData, MonitorSummary, StationDevicesResponse,
     StationMeta, StationStatus,
 };
 use crate::monitor::parse_st_packet;
 use chrono::{Local, Timelike};
-use sqlx::mysql::MySqlPoolOptions;
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::MySqlPool;
 use std::collections::{HashMap, HashSet};
@@ -41,6 +41,46 @@ fn parse_dms_coord(s: &str) -> f64 {
     dd + mm / 60.0 + ss / 3600.0
 }
 
+/// 内置站点地理信息回退表（省份, 纬度, 经度）
+/// 用于 Doris station_info 无地理列、或数据库完全不可用时补齐地图展示所需数据
+fn station_sim_meta(id: &str) -> (&'static str, f64, f64) {
+    match id {
+        "50936" => ("吉林", 45.6, 122.8),
+        "50968" => ("黑龙江", 45.2, 127.9),
+        "53399" => ("河北", 41.1, 114.7),
+        "53942" => ("陕西", 35.7, 109.4),
+        "54333" => ("辽宁", 41.9, 122.8),
+        "54416" => ("北京", 40.4, 116.8),
+        "54808" => ("山东", 36.2, 115.6),
+        "56173" => ("四川", 32.8, 102.5),
+        "56312" => ("西藏", 29.6, 94.3),
+        "57633" => ("重庆", 28.8, 108.7),
+        "57958" => ("广西", 25.0, 110.3),
+        "58005" => ("河南", 34.4, 115.6),
+        "58457" => ("浙江", 30.2, 120.1),
+        "58737" => ("福建", 27.0, 118.3),
+        "52983" => ("甘肃", 35.8, 104.1),
+        "53817" => ("宁夏", 36.0, 106.2),
+        "51358" => ("新疆", 44.2, 85.9),
+        "52754" => ("青海", 37.3, 100.1),
+        "52856" => ("青海", 36.3, 100.6),
+        "53963" => ("山西", 35.6, 111.3),
+        "56739" => ("云南", 25.0, 98.4),
+        "57251" => ("湖北", 33.2, 110.4),
+        "57793" => ("江西", 27.8, 114.3),
+        "57832" => ("贵州", 26.6, 108.6),
+        "57874" => ("湖南", 26.4, 112.3),
+        "58141" => ("江苏", 33.6, 119.0),
+        "58362" => ("上海", 31.4, 121.4),
+        "58437" => ("安徽", 30.1, 118.1),
+        "59758" => ("海南", 20.0, 110.3),
+        "59294" => ("广东", 23.2, 113.6),
+        "52737" => ("青海", 37.3, 97.3),
+        "57914" => ("贵州", 26.4, 106.6),
+        _ => ("未知省份", 0.0, 0.0),
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct StationParamsRow {
     #[sqlx(rename = "station_id")]
@@ -65,34 +105,131 @@ struct StationParamsRow {
     reference_radiation_station: Option<i8>,
 }
 
+/// SQL 字符串字面量转义（用于 Doris 文本协议的安全内联）
+/// 转义反斜杠与单引号，防止注入
+fn sql_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+/// 将站点号列表转为已转义的 SQL IN 列表字面量，如 '50936','50968'
+fn quote_ids(ids: &[String]) -> String {
+    ids.iter()
+        .map(|id| format!("'{}'", sql_escape(id)))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// 将查询间隔钳制到安全范围（1 分钟 ~ 24 小时），保证内联的是受控整数
+fn valid_interval_minutes(n: i32) -> i32 {
+    n.clamp(1, 1440)
+}
+
 pub struct DbService {
     pub pool: Option<MySqlPool>,
     pub cloud_pool: Option<MySqlPool>,
     pub sqlite_pool: Option<sqlx::SqlitePool>,
     pub simulation_mode: bool,
+    /// 主库是否为 Doris（走 MySQL 协议，但 SQL 使用文本协议内联参数）
+    pub is_doris: bool,
+    /// Doris 模式下 ST 明细表名（支持 db.table 全限定名）
+    doris_st_table: String,
+    /// Doris 模式下台站信息表名（支持 db.table 全限定名）
+    doris_station_table: String,
     device_type_names: HashMap<String, String>,
 }
 
 impl DbService {
+    /// 兼容入口：仅 MySQL 主库 + 云库（保持原有调用方签名不变）
     pub async fn new(cfg: &DatabaseConfig, cloud_cfg: &DatabaseConfig) -> Self {
-        let db_url = format!(
-            "mysql://{}:{}@{}:{}/{}",
-            cfg.user, cfg.password, cfg.host, cfg.port, cfg.db
-        );
+        Self::new_with_source(cfg, cloud_cfg, None, "mysql").await
+    }
 
-        let main_pool = match MySqlPoolOptions::new()
+    /// 完整构造函数：按 data_source 选择主库类型（mysql / doris），云库始终为 MySQL
+    pub async fn new_with_source(
+        cfg: &DatabaseConfig,
+        cloud_cfg: &DatabaseConfig,
+        doris_cfg: Option<&DorisConfig>,
+        data_source: &str,
+    ) -> Self {
+        let use_doris = data_source.eq_ignore_ascii_case("doris");
+
+        // 选择主库连接参数：Doris 优先使用 [doris] 段，缺失时降级为 MySQL 配置
+        let mut doris_st_table = String::new();
+        let mut doris_station_table = String::new();
+        let (main_url, main_desc, is_doris) = if use_doris {
+            match doris_cfg {
+                Some(d) => {
+                    doris_st_table = d.st_table.clone();
+                    doris_station_table = d.station_table.clone();
+                    (
+                        format!(
+                            "mysql://{}:{}@{}:{}/{}",
+                            d.user, d.password, d.host, d.port, d.db
+                        ),
+                        format!("{}:{}/{}", d.host, d.port, d.db),
+                        true,
+                    )
+                }
+                None => {
+                    tracing::warn!("data_source = doris 但未配置 [doris] 段，回退到 MySQL 主库配置");
+                    (
+                        format!(
+                            "mysql://{}:{}@{}:{}/{}",
+                            cfg.user, cfg.password, cfg.host, cfg.port, cfg.db
+                        ),
+                        format!("{}:{}/{}", cfg.host, cfg.port, cfg.db),
+                        false,
+                    )
+                }
+            }
+        } else {
+            (
+                format!(
+                    "mysql://{}:{}@{}:{}/{}",
+                    cfg.user, cfg.password, cfg.host, cfg.port, cfg.db
+                ),
+                format!("{}:{}/{}", cfg.host, cfg.port, cfg.db),
+                false,
+            )
+        };
+
+        let backend_name = if is_doris { "Doris" } else { "MySQL" };
+
+        let pool_opts = MySqlPoolOptions::new()
             .max_connections(10)
             .min_connections(2)
-            .acquire_timeout(Duration::from_secs(10))
-            .connect(&db_url)
-            .await
-        {
+            .acquire_timeout(Duration::from_secs(10));
+
+        // Doris FE 不接受 sqlx 默认的非常量 SET 初始化语句
+        // （sql_mode=(SELECT CONCAT(...)) / time_zone），需关闭相关连接选项；
+        // PrepareOk 兼容性由 vendor/sqlx-mysql 补丁保证。
+        let connect_result = if is_doris {
+            match main_url.parse::<MySqlConnectOptions>() {
+                Ok(o) => {
+                    pool_opts
+                        .connect_with(
+                            o.pipes_as_concat(false)
+                                .no_engine_substitution(false)
+                                .timezone(None),
+                        )
+                        .await
+                }
+                Err(e) => {
+                    tracing::warn!("Doris 连接 URL 解析失败: {}", e);
+                    Err(e)
+                }
+            }
+        } else {
+            pool_opts.connect(&main_url).await
+        };
+
+        let main_pool = match connect_result {
             Ok(pool) => {
-                tracing::info!("MySQL 主库连接成功: {}:{}/{}", cfg.host, cfg.port, cfg.db);
+                tracing::info!("{} 主库连接成功: {}", backend_name, main_desc);
                 Some(pool)
             }
             Err(e) => {
-                tracing::warn!("MySQL 主库连接失败: {}，切换到模拟模式", e);
+                tracing::warn!("{} 主库连接失败: {}，切换到模拟模式", backend_name, e);
                 None
             }
         };
@@ -129,6 +266,9 @@ impl DbService {
             cloud_pool,
             sqlite_pool: None,
             simulation_mode: is_main_none,
+            is_doris,
+            doris_st_table,
+            doris_station_table,
             device_type_names: HashMap::new(),
         };
 
@@ -351,6 +491,9 @@ impl DbService {
             cloud_pool: None,
             sqlite_pool,
             simulation_mode: true,
+            is_doris: false,
+            doris_st_table: String::new(),
+            doris_station_table: String::new(),
             device_type_names,
         }
     }
@@ -416,48 +559,76 @@ impl DbService {
             return result;
         }
 
+        // Doris 模式：台站信息来自 station_info（无省份/经纬度列，
+        // 地理信息用内置回退表 station_sim_meta 补齐，保证地图展示可用）
+        if self.is_doris {
+            let pool = match self.pool.as_ref() {
+                Some(p) => p,
+                None => return result,
+            };
+
+            // 注意：Doris 列元数据与 sqlx 按名取列不兼容，使用位置元组解码
+            let ids: Vec<String> = station_ids.iter().map(|s| s.id.clone()).collect();
+            let sql = format!(
+                "SELECT station_num, station_name FROM {} WHERE station_num IN ({})",
+                self.doris_station_table,
+                quote_ids(&ids)
+            );
+
+            let rows: Vec<(String, Option<String>)> = match sqlx::query_as::<
+                _,
+                (String, Option<String>),
+            >(&sql)
+            .fetch_all(pool)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    tracing::warn!("Doris 加载 station_info 失败: {}", e);
+                    Vec::new()
+                }
+            };
+
+            let info_map: HashMap<String, String> = rows
+                .into_iter()
+                .map(|(num, name)| (num, name.unwrap_or_default()))
+                .collect();
+
+            for st in station_ids {
+                let (province, lat, lon) = station_sim_meta(&st.id);
+                let name = match info_map.get(&st.id) {
+                    Some(n) if !n.is_empty() => n.clone(),
+                    _ => {
+                        if !info_map.contains_key(&st.id) {
+                            tracing::warn!("站点 {} 在 Doris station_info 中未找到", st.id);
+                        }
+                        st.name.clone()
+                    }
+                };
+                result.insert(
+                    st.id.clone(),
+                    StationMeta {
+                        station_id: st.id.clone(),
+                        station_name: name,
+                        province: province.to_string(),
+                        address: String::new(),
+                        latitude: lat,
+                        longitude: lon,
+                        altitude: 0.0,
+                        station_type: String::new(),
+                        is_acid_rain: false,
+                        is_reference_radiation: false,
+                    },
+                );
+            }
+            return result;
+        }
+
         let pool = match (self.cloud_pool.as_ref(), self.pool.as_ref()) {
             (Some(p), _) => p,
             (None, Some(p)) => p,
             (None, None) => {
                 // Fallback: create meta from config with approximate coordinates
-                fn station_sim_meta(id: &str) -> (&'static str, f64, f64) {
-                    match id {
-                        "50936" => ("吉林", 45.6, 122.8),
-                        "50968" => ("黑龙江", 45.2, 127.9),
-                        "53399" => ("河北", 41.1, 114.7),
-                        "53942" => ("陕西", 35.7, 109.4),
-                        "54333" => ("辽宁", 41.9, 122.8),
-                        "54416" => ("北京", 40.4, 116.8),
-                        "54808" => ("山东", 36.2, 115.6),
-                        "56173" => ("四川", 32.8, 102.5),
-                        "56312" => ("西藏", 29.6, 94.3),
-                        "57633" => ("重庆", 28.8, 108.7),
-                        "57958" => ("广西", 25.0, 110.3),
-                        "58005" => ("河南", 34.4, 115.6),
-                        "58457" => ("浙江", 30.2, 120.1),
-                        "58737" => ("福建", 27.0, 118.3),
-                        "52983" => ("甘肃", 35.8, 104.1),
-                        "53817" => ("宁夏", 36.0, 106.2),
-                        "51358" => ("新疆", 44.2, 85.9),
-                        "52754" => ("青海", 37.3, 100.1),
-                        "52856" => ("青海", 36.3, 100.6),
-                        "53963" => ("山西", 35.6, 111.3),
-                        "56739" => ("云南", 25.0, 98.4),
-                        "57251" => ("湖北", 33.2, 110.4),
-                        "57793" => ("江西", 27.8, 114.3),
-                        "57832" => ("贵州", 26.6, 108.6),
-                        "57874" => ("湖南", 26.4, 112.3),
-                        "58141" => ("江苏", 33.6, 119.0),
-                        "58362" => ("上海", 31.4, 121.4),
-                        "58437" => ("安徽", 30.1, 118.1),
-                        "59758" => ("海南", 20.0, 110.3),
-                        "59294" => ("广东", 23.2, 113.6),
-                        "52737" => ("青海", 37.3, 97.3),
-                        "57914" => ("贵州", 26.4, 106.6),
-                        _ => ("未知省份", 0.0, 0.0),
-                    }
-                }
                 for st in station_ids {
                     let meta = station_sim_meta(&st.id);
                     result.insert(
@@ -571,6 +742,13 @@ impl DbService {
     ) -> MonitorData {
         if self.simulation_mode || self.pool.is_none() {
             return crate::monitor::generate_simulated_data(stations);
+        }
+
+        // Doris 走文本协议（内联参数），避免预处理协议兼容性问题
+        if self.is_doris {
+            return self
+                .query_monitor_data_doris(stations, check_interval_minutes)
+                .await;
         }
 
         let start = std::time::Instant::now();
@@ -705,7 +883,10 @@ impl DbService {
             total_records += r1;
             let info = stations.iter().find(|s| s.id == station_id);
             let mut alarms = Vec::new();
-            let needs_st_check = r2 == r5 && r5 > 20;
+            // 在线判定（2026-08-07 业务确认放宽）：最近窗口（data_time 在最近 6 分钟内）
+            // 有数据即视为在线并执行 ST 包检查；原规则 r2 == r5 && r5 > 20
+            // 假设 5 分钟级数据频率，不适用于分钟级数据
+            let needs_st_check = r2 > 0;
 
             if needs_st_check && !min_time.is_empty() {
                 // Query ST packet for this station - port of sqlProST
@@ -800,6 +981,251 @@ impl DbService {
         let duration = start.elapsed();
         tracing::info!(
             "query_monitor_data 完成: {} 个站点, 耗时 {:?}",
+            stations_out.len(),
+            duration
+        );
+
+        MonitorData {
+            summary: MonitorSummary {
+                total: stations.len(),
+                online: online_count,
+                alarms: total_alarms,
+                checked: total_checked,
+                records: total_records,
+                avg_arrival_rate: (avg_rate * 10.0).round() / 10.0,
+            },
+            stations: stations_out,
+            last_update: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            error: None,
+        }
+    }
+
+    /// Doris 版本的监控数据查询：与 query_monitor_data 逻辑一致，
+    /// 但所有参数经校验/转义后内联（不带 bind，走 COM_QUERY 文本协议），
+    /// 以兼容 Doris 对预处理协议的有限支持。
+    async fn query_monitor_data_doris(
+        &self,
+        stations: &[StationConfig],
+        check_interval_minutes: i32,
+    ) -> MonitorData {
+        let start = std::time::Instant::now();
+        let pool = self.pool.as_ref().unwrap();
+        let station_ids: Vec<String> = stations.iter().map(|s| s.id.clone()).collect();
+        let ids = quote_ids(&station_ids);
+        let interval = valid_interval_minutes(check_interval_minutes);
+        let st_table = &self.doris_st_table;
+
+        // 基础聚合查询（Doris：表名可配置，入库时间列为 create_time）
+        let basic_sql = format!(
+            "SELECT station_num, COUNT(*), \
+             COUNT(IF(data_time > (NOW() - INTERVAL 6 MINUTE), 1, NULL)), \
+             MIN(data_time), MAX(data_time) \
+             FROM {} \
+             WHERE create_time > (NOW() - INTERVAL {} MINUTE) \
+             AND station_num IN ({}) \
+             GROUP BY station_num ORDER BY station_num",
+            st_table, interval, ids
+        );
+
+        let basic_rows = match sqlx::query_as::<
+            _,
+            (
+                String,
+                i64,
+                Option<i64>,
+                Option<chrono::NaiveDateTime>,
+                Option<chrono::NaiveDateTime>,
+            ),
+        >(&basic_sql)
+        .fetch_all(pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::error!("Doris 主聚合查询失败: {}", e);
+                return crate::monitor::generate_simulated_data(stations);
+            }
+        };
+
+        let device_sql = format!(
+            "SELECT station_num, COUNT(DISTINCT CONCAT(device_type, device_nid)) \
+             FROM {} \
+             WHERE create_time > (NOW() - INTERVAL {} MINUTE) \
+             AND station_num IN ({}) \
+             GROUP BY station_num ORDER BY station_num",
+            st_table, interval, ids
+        );
+
+        let device_rows: std::collections::HashMap<String, i64> =
+            match sqlx::query_as::<_, (String, i64)>(&device_sql)
+                .fetch_all(pool)
+                .await
+            {
+                Ok(rows) => rows.into_iter().collect(),
+                Err(e) => {
+                    tracing::warn!("Doris 设备数查询失败: {}", e);
+                    std::collections::HashMap::new()
+                }
+            };
+
+        let mut rows_map: std::collections::HashMap<
+            String,
+            (
+                i64,
+                Option<i64>,
+                Option<chrono::NaiveDateTime>,
+                Option<chrono::NaiveDateTime>,
+                i64,
+            ),
+        > = HashMap::new();
+        for row in basic_rows {
+            let device_count = device_rows.get(&row.0).copied().unwrap_or(0);
+            rows_map.insert(row.0, (row.1, row.2, row.3, row.4, device_count));
+        }
+
+        let mut stations_out = Vec::new();
+        let mut total_alarms = 0usize;
+        let mut total_checked = 0usize;
+        let mut online_count = 0usize;
+        let mut total_records = 0i64;
+
+        // 最近到达时间与到达率（30 分钟窗口近似，Doris 入库时间列为 create_time）
+        let arrival_sql = format!(
+            "SELECT station_num, \
+             MAX(create_time) as last_arrival, \
+             COUNT(IF(create_time > (NOW() - INTERVAL 30 MINUTE), 1, NULL)) as cnt_recent \
+             FROM {} \
+             WHERE station_num IN ({}) \
+             AND create_time > (NOW() - INTERVAL 2 HOUR) \
+             GROUP BY station_num",
+            st_table, ids
+        );
+
+        let arrival_rows: std::collections::HashMap<String, (Option<chrono::NaiveDateTime>, i64)> =
+            match sqlx::query_as::<_, (String, Option<chrono::NaiveDateTime>, i64)>(&arrival_sql)
+                .fetch_all(pool)
+                .await
+            {
+                Ok(rows) => rows.into_iter().map(|r| (r.0, (r.1, r.2))).collect(),
+                Err(_) => std::collections::HashMap::new(),
+            };
+
+        for (station_id, row) in rows_map {
+            let r1 = row.0;
+            let r2 = row.1.unwrap_or(0);
+            let r5 = row.4;
+            let min_time = row
+                .2
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default();
+            let max_time = row
+                .3
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default();
+
+            total_records += r1;
+            let info = stations.iter().find(|s| s.id == station_id);
+            let mut alarms = Vec::new();
+            // 在线判定（2026-08-07 业务确认放宽）：最近窗口（data_time 在最近 6 分钟内）
+            // 有数据即视为在线并执行 ST 包检查；原规则 r2 == r5 && r5 > 20
+            // 假设 5 分钟级数据频率，不适用于分钟级数据
+            let needs_st_check = r2 > 0;
+
+            if needs_st_check && !min_time.is_empty() {
+                // ST 包查询 - 移植自 sqlProST（参数转义内联，Doris 入库时间列为 create_time）
+                let st_sql = format!(
+                    "SELECT data FROM {} \
+                     WHERE station_num = '{}' AND data_time = '{}' \
+                     AND create_time > (NOW() - INTERVAL 10 MINUTE) \
+                     LIMIT 1",
+                    st_table,
+                    sql_escape(&station_id),
+                    sql_escape(&min_time)
+                );
+
+                if let Ok(st_row) = sqlx::query_scalar::<_, String>(&st_sql)
+                    .fetch_optional(pool)
+                    .await
+                {
+                    if let Some(data_str) = st_row {
+                        let parsed = parse_st_packet(&data_str);
+                        for p in parsed {
+                            if p.abnormal {
+                                alarms.push(p.alarm);
+                                total_alarms += 1;
+                            }
+                            total_checked += 1;
+                        }
+                    }
+                }
+            }
+
+            let is_online = needs_st_check;
+            if is_online {
+                online_count += 1;
+            }
+
+            let (last_arrival, arrival_rate) = arrival_rows
+                .get(&station_id)
+                .map(|(t, cnt)| {
+                    let last = t
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_default();
+                    // 30 分钟含 6 个 5 分钟桶，按比例折算到 100%
+                    let rate = (*cnt as f64 / 6.0 * 100.0 * 10.0).round() / 10.0;
+                    (last, rate.min(100.0))
+                })
+                .unwrap_or((String::new(), 0.0));
+
+            stations_out.push(StationStatus {
+                id: station_id.clone(),
+                name: info.map(|s| s.name.clone()).unwrap_or_default(),
+                vendor: info.map(|s| s.vendor.clone()).unwrap_or_default(),
+                province: String::new(),
+                records: r1,
+                recent_5min: r2,
+                min_time,
+                max_time,
+                devices: r5,
+                online: is_online,
+                alarms: alarms.clone(),
+                alarm_count: alarms.len(),
+                last_arrival_time: last_arrival,
+                arrival_rate_24h: arrival_rate,
+            });
+        }
+
+        // 补充无数据的站点
+        for st in stations {
+            if !stations_out.iter().any(|s| s.id == st.id) {
+                stations_out.push(StationStatus {
+                    id: st.id.clone(),
+                    name: st.name.clone(),
+                    vendor: st.vendor.clone(),
+                    province: String::new(),
+                    records: 0,
+                    recent_5min: 0,
+                    min_time: String::new(),
+                    max_time: String::new(),
+                    devices: 0,
+                    online: false,
+                    alarms: vec![],
+                    alarm_count: 0,
+                    last_arrival_time: String::new(),
+                    arrival_rate_24h: 0.0,
+                });
+            }
+        }
+
+        let avg_rate = if !stations_out.is_empty() {
+            stations_out.iter().map(|s| s.arrival_rate_24h).sum::<f64>() / stations_out.len() as f64
+        } else {
+            0.0
+        };
+
+        let duration = start.elapsed();
+        tracing::info!(
+            "query_monitor_data_doris 完成: {} 个站点, 耗时 {:?}",
             stations_out.len(),
             duration
         );
@@ -1017,11 +1443,28 @@ impl DbService {
         // For each station, get the latest rows per device within a short window.
         // Use a simple ORDER BY ... LIMIT query (fast with ix_station_receivetime)
         // and deduplicate the latest per (device_type, device_nid) in Rust.
-        let sql = "SELECT device_type, device_nid, data_time, `data` \
+        // Doris 走文本协议：station_id 转义后内联；MySQL 保持参数化。
+        // Doris 表无自增 id 列，ORDER BY 以 data_time/create_time 定序；入库时间列为 create_time。
+        // 注意：Doris 列定义元数据与 sqlx 按名取列不兼容（ColumnNotFound），
+        // 因此 Doris 路径一律使用位置元组解码，不使用 FromRow 结构体按名映射。
+        let sql = if self.is_doris {
+            format!(
+                "SELECT device_type, device_nid, data_time, `data` \
+                 FROM {} \
+                 WHERE station_num = '{}' AND create_time > (NOW() - INTERVAL 5 MINUTE) \
+                 ORDER BY device_type, device_nid, data_time DESC, create_time DESC \
+                 LIMIT 100",
+                self.doris_st_table,
+                sql_escape(station_id)
+            )
+        } else {
+            "SELECT device_type, device_nid, data_time, `data` \
              FROM data_st \
              WHERE station_num = ? AND receive_time > (NOW() - INTERVAL 5 MINUTE) \
              ORDER BY device_type, device_nid, data_time DESC, receive_time DESC, id DESC \
-             LIMIT 100";
+             LIMIT 100"
+                .to_string()
+        };
 
         #[derive(sqlx::FromRow)]
         struct StRow {
@@ -1031,15 +1474,36 @@ impl DbService {
             data: String,
         }
 
-        let rows: Vec<StRow> = match sqlx::query_as::<_, StRow>(&sql)
-            .bind(station_id)
-            .fetch_all(pool)
-            .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                tracing::warn!("查询站点设备状态失败 {}: {}", station_id, e);
-                return result;
+        let rows: Vec<StRow> = if self.is_doris {
+            match sqlx::query_as::<_, (String, String, chrono::NaiveDateTime, String)>(&sql)
+                .fetch_all(pool)
+                .await
+            {
+                Ok(tuples) => tuples
+                    .into_iter()
+                    .map(|t| StRow {
+                        device_type: t.0,
+                        device_nid: t.1,
+                        data_time: t.2,
+                        data: t.3,
+                    })
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!("查询站点设备状态失败 {}: {}", station_id, e);
+                    return result;
+                }
+            }
+        } else {
+            match sqlx::query_as::<_, StRow>(&sql)
+                .bind(station_id)
+                .fetch_all(pool)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    tracing::warn!("查询站点设备状态失败 {}: {}", station_id, e);
+                    return result;
+                }
             }
         };
 

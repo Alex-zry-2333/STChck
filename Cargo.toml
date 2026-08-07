@@ -36,3 +36,8 @@ hmac = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 clap = { version = "4", features = ["derive", "env"], optional = true }
+
+# 本地补丁：兼容 Apache Doris FE 返回的 10 字节 PrepareOk（缺少 warnings 字段）
+# 补丁内容见 vendor/sqlx-mysql/src/protocol/statement/prepare_ok.rs 顶部注释
+[patch.crates-io]
+sqlx-mysql = { path = "vendor/sqlx-mysql" }

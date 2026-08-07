@@ -2,11 +2,18 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+fn default_data_source() -> String {
+    "mysql".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub cloud_database: DatabaseConfig,
+    /// 可选的 Doris 数据源配置；仅在 monitor.data_source = "doris" 且非模拟模式时生效
+    #[serde(default)]
+    pub doris: Option<DorisConfig>,
     pub monitor: MonitorConfig,
     #[serde(default)]
     pub auth: AuthConfig,
@@ -50,10 +57,37 @@ pub struct DatabaseConfig {
     pub db: String,
 }
 
+fn default_st_table() -> String {
+    "ods_data_st".to_string()
+}
+
+fn default_station_table() -> String {
+    "ai_isos.station_info".to_string()
+}
+
+/// Doris 数据源配置（FE MySQL 协议查询端口默认 9030）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DorisConfig {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: String,
+    pub db: String,
+    /// ST 明细表名（支持 db.table 全限定名）
+    #[serde(default = "default_st_table")]
+    pub st_table: String,
+    /// 台站信息表名（支持 db.table 全限定名）
+    #[serde(default = "default_station_table")]
+    pub station_table: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitorConfig {
     pub check_interval_minutes: u32,
     pub simulation_mode: bool,
+    /// 真实模式下的数据源：mysql（默认）或 doris
+    #[serde(default = "default_data_source")]
+    pub data_source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

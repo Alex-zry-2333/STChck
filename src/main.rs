@@ -175,6 +175,9 @@ async fn main() {
     if let Ok(pwd) = std::env::var("CLOUD_DB_PASSWORD") {
         cfg.cloud_database.password = pwd;
     }
+    if let (Ok(pwd), Some(doris)) = (std::env::var("DORIS_DB_PASSWORD"), cfg.doris.as_mut()) {
+        doris.password = pwd;
+    }
 
     let (tx, _rx) = broadcast::channel::<String>(16);
     let (devices_tx, _devices_rx) = broadcast::channel::<String>(128);
@@ -183,7 +186,14 @@ async fn main() {
         tracing::info!("配置为模拟模式，使用本地 SQLite 数据库");
         db::DbService::new_simulation().await
     } else {
-        db::DbService::new(&cfg.database, &cfg.cloud_database).await
+        tracing::info!("真实模式，数据源: {}", cfg.monitor.data_source);
+        db::DbService::new_with_source(
+            &cfg.database,
+            &cfg.cloud_database,
+            cfg.doris.as_ref(),
+            &cfg.monitor.data_source,
+        )
+        .await
     };
 
     // Load station metadata once at startup

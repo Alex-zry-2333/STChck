@@ -6,6 +6,105 @@
 
 ---
 
+## 2026-08-07 功能：Apache Doris 数据源支持（含联调修复）
+
+### 1. Doris 数据源接入
+
+**影响**: 真实模式下可将主库切换为 Apache Doris（经 MySQL 协议连接 FE 查询端口 9030），云库与模拟模式行为不变；已通过测试 Doris 环境全链路联调。
+
+| 文件 | 修改内容 |
+|------|----------|
+| `src/config.rs` | 新增 `DorisConfig`（含 `st_table` / `station_table` 可选表名配置）；`Config` 新增可选 `[doris]` 段；`MonitorConfig` 新增 `data_source`（`mysql` 默认 / `doris`） |
+| `src/db.rs` | `DbService` 新增 `is_doris` 与 Doris 表名字段；新增 `new_with_source` 构造函数；Doris 路径查询适配（表名 `ods_data_st`、入库时间列 `create_time`、无自增 id 的 ORDER BY）；站点元数据改查 `station_info`（无地理列，用内置回退表补齐省份/经纬度） |
+| `src/main.rs` | 新增 `DORIS_DB_PASSWORD` 环境变量注入；数据源三分支选择（模拟 / MySQL / Doris） |
+| `config.toml.example` | 新增 `[doris]` 段模板与 `data_source` 注释 |
+
+### 2. Doris 协议兼容性修复（联调中发现）
+
+**影响**: sqlx 默认行为与 Doris FE 存在三层不兼容，直连全部失败。
+
+| 问题 | 修复 |
+|------|------|
+| 连接初始化 `SET sql_mode=(SELECT CONCAT(...))` 被 Doris 拒绝（1105 非常量表达式） | Doris 连接使用 `pipes_as_concat(false)` + `no_engine_substitution(false)` + `timezone(None)` |
+| Doris FE 返回 10 字节 PrepareOk（标准 12 字节，缺 warnings 字段），sqlx 严格解析失败 | `vendor/sqlx-mysql` 本地补丁（warnings 字段可选），`Cargo.toml` 以 `[patch.crates-io]` 挂载；**vendor 目录必须随仓库提交** |
+| Doris 列元数据导致 sqlx 按名取列失败（ColumnNotFound） | Doris 路径一律使用位置元组解码，不用 `FromRow` 按名映射；MySQL/SQLite 路径保持原样 |
+| （弃用方案）mysql_async 文本协议 | 实测 COM_QUERY 挂起，已回滚，未引入该依赖 |
+
+Doris 路径 SQL 参数处理：整数经 `valid_interval_minutes` 钳制、字符串经 `sql_escape` 转义后内联（无注入面）。
+
+### 3. 在线判定规则放宽（业务确认）
+
+**影响**: 原 tm.c 移植规则 `recent_5min == devices && devices > 20` 假设 5 分钟级数据频率，分钟级数据下所有站点误报离线、ST 告警不触发。
+
+| 文件 | 修改内容 |
+|------|----------|
+| `src/db.rs` | `query_monitor_data` 与 `query_monitor_data_doris` 在线判定放宽为「最近 6 分钟窗口有数据即在线」并执行 ST 包检查；MySQL / Doris 两条路径一致 |
+
+联调实测（分钟级测试数据）：在线站点 0/32 → 27/32，ST 检查正常执行，设备状态页正常。
+
+### 4. 文档与工具
+
+| 文件 | 修改内容 |
+|------|----------|
+| `docs/roles/` | 新增角色提示词（系统架构师 / 数据库工程师 / 测试工程师）与「先设计后执行」工作流说明 |
+| `docs/doris-support-design.md` | Doris 支持设计文档：现状分析、任务拆分、验收标准、D1–D10 决策记录与联调验证记录 |
+| `docs/doris/ods_data_st_ddl.txt` | Doris 真实建表语句存档 |
+| `examples/doris_probe.rs` | Doris 连接诊断探针（连接串经 `DORIS_URL` 环境变量传入，密码不落盘） |
+| `README.md` | 新增 Doris 模式说明与配置示例 |
+| `AGENTS.md` | 配置字段、模式切换、目录结构、数据库查询约定（Doris 例外条款与 vendor 补丁警示） |
+
+## 修改文件列表
+
+### 功能/数据
+- `src/config.rs`（DorisConfig 与数据源开关）
+- `src/db.rs`（Doris 连接与查询路径、在线判定放宽）
+- `src/main.rs`（环境变量与数据源选择）
+- `Cargo.toml` / `Cargo.lock`（[patch.crates-io] vendor 补丁挂载）
+- `vendor/sqlx-mysql/`（新增，PrepareOk 兼容补丁）
+
+### 配置/文档/工具
+- `config.toml.example`、`README.md`、`AGENTS.md`
+- `docs/`（新增，角色提示词与设计文档）
+- `examples/doris_probe.rs`（新增，诊断工具）
+
+## 未修改文件（保持原样）
+- `tm.c`（原始业务逻辑参考）
+- `monitor_app.py`（旧版 Python 原型）
+- `src/monitor.rs`、`src/models.rs`（业务逻辑与数据结构未变）
+- `templates/`（前端页面未变）
+
+## 使用方式变更
+
+Doris 模式（真实模式）配置：
+
+```toml
+[monitor]
+simulation_mode = false
+data_source = "doris"
+
+[doris]
+host = "doris-fe-host"
+port = 9030
+user = "root"
+password = "${DORIS_DB_PASSWORD}"
+db = "ods_iws"
+# st_table = "ods_data_st"               # 默认值
+# station_table = "ai_isos.station_info" # 默认值
+```
+
+```powershell
+$env:DORIS_DB_PASSWORD = "实际密码"
+.\start.ps1
+```
+
+注意事项：
+
+1. `vendor/sqlx-mysql/` 是构建必需的本地补丁，不可删除；升级 sqlx 版本时需同步评估补丁。
+2. 未配置 `[doris]` 或 `data_source` 缺省时行为与之前完全一致（向后兼容）。
+3. Doris 连接失败时自动降级为模拟模式，与 MySQL 失败行为一致。
+
+---
+
 ## 2025-06-16 安全修复（P0 优先级）
 
 ### 1. 密码泄露修复

@@ -16,9 +16,23 @@ user = "root"
 password = "${CLOUD_DB_PASSWORD}"
 db = "cammoc_cloud_w"
 
+# 可选：Doris 数据源（仅真实模式且 data_source = "doris" 时生效）
+# Doris FE 的 MySQL 协议查询端口默认为 9030
+# 密码通过环境变量 DORIS_DB_PASSWORD 注入
+# [doris]
+# host = "10.10.1.60"
+# port = 9030
+# user = "root"
+# password = "${DORIS_DB_PASSWORD}"
+# db = "ods_iws"                          # 连接库（ST 明细所在库）
+# st_table = "ods_data_st"                # ST 明细表名（默认值，支持 db.table）
+# station_table = "ai_isos.station_info"  # 台站信息表（默认值，支持 db.table）
+
 [monitor]
 check_interval_minutes = 5
 simulation_mode = true
+# 真实模式数据源：mysql（默认）或 doris
+# data_source = "mysql"
 
 [[stations]]
 id = "50936"

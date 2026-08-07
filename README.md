@@ -73,6 +73,26 @@ vendor = "华云"
 | -------- | --------------------------- | ----------------------------- |
 | 模拟模式 | `simulation_mode = true`  | 无需数据库，生成随机模拟数据  |
 | 真实模式 | `simulation_mode = false` | 连接 MySQL 查询`data_st` 表 |
+| Doris 模式 | `simulation_mode = false` + `data_source = "doris"` | 通过 MySQL 协议连接 Doris FE（默认端口 9030）查询 `data_st` 表 |
+
+### Doris 数据源（可选）
+
+真实模式下可将主库切换为 Apache Doris（云库 `station_params` / `device_type` 仍走 MySQL）：
+
+```toml
+[monitor]
+simulation_mode = false
+data_source = "doris"        # mysql（默认）或 doris
+
+[doris]
+host = "10.10.1.60"         # Doris FE 主机
+port = 9030                 # Doris FE MySQL 协议查询端口
+user = "root"
+password = "${DORIS_DB_PASSWORD}"   # 由环境变量 DORIS_DB_PASSWORD 注入
+db = "cammoc_w"
+```
+
+Doris 路径的查询走 MySQL 文本协议（参数经校验/转义后内联），以兼容 Doris 对预处理协议的有限支持；连接失败时自动降级为模拟模式，与 MySQL 行为一致。
 
 ## 使用方法
 
