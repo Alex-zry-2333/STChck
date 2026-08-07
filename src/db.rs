@@ -594,6 +594,12 @@ impl DbService {
                 .map(|(num, name)| (num, name.unwrap_or_default()))
                 .collect();
 
+            tracing::info!(
+                "[元数据] Doris station_info 命中 {}/{} 个站点，未命中使用配置名称+内置地理回退",
+                info_map.len(),
+                station_ids.len()
+            );
+
             for st in station_ids {
                 let (province, lat, lon) = station_sim_meta(&st.id);
                 let name = match info_map.get(&st.id) {
@@ -604,8 +610,7 @@ impl DbService {
                         }
                         st.name.clone()
                     }
-                };
-                result.insert(
+                };                result.insert(
                     st.id.clone(),
                     StationMeta {
                         station_id: st.id.clone(),
@@ -1040,7 +1045,14 @@ impl DbService {
         .fetch_all(pool)
         .await
         {
-            Ok(rows) => rows,
+            Ok(rows) => {
+                tracing::debug!(
+                    "[Doris查询] 基础聚合: {} 行, 累计耗时 {:?}",
+                    rows.len(),
+                    start.elapsed()
+                );
+                rows
+            }
             Err(e) => {
                 tracing::error!("Doris 主聚合查询失败: {}", e);
                 return crate::monitor::generate_simulated_data(stations);
@@ -1061,7 +1073,14 @@ impl DbService {
                 .fetch_all(pool)
                 .await
             {
-                Ok(rows) => rows.into_iter().collect(),
+                Ok(rows) => {
+                    tracing::debug!(
+                        "[Doris查询] 设备数聚合: {} 行, 累计耗时 {:?}",
+                        rows.len(),
+                        start.elapsed()
+                    );
+                    rows.into_iter().collect()
+                }
                 Err(e) => {
                     tracing::warn!("Doris 设备数查询失败: {}", e);
                     std::collections::HashMap::new()
@@ -1106,8 +1125,18 @@ impl DbService {
                 .fetch_all(pool)
                 .await
             {
-                Ok(rows) => rows.into_iter().map(|r| (r.0, (r.1, r.2))).collect(),
-                Err(_) => std::collections::HashMap::new(),
+                Ok(rows) => {
+                    tracing::debug!(
+                        "[Doris查询] 到达率统计: {} 行, 累计耗时 {:?}",
+                        rows.len(),
+                        start.elapsed()
+                    );
+                    rows.into_iter().map(|r| (r.0, (r.1, r.2))).collect()
+                }
+                Err(e) => {
+                    tracing::warn!("Doris 到达率查询失败: {}", e);
+                    std::collections::HashMap::new()
+                }
             };
 
         for (station_id, row) in rows_map {
@@ -1149,13 +1178,22 @@ impl DbService {
                 {
                     if let Some(data_str) = st_row {
                         let parsed = parse_st_packet(&data_str);
+                        let mut station_alarms = 0usize;
                         for p in parsed {
                             if p.abnormal {
                                 alarms.push(p.alarm);
                                 total_alarms += 1;
+                                station_alarms += 1;
                             }
                             total_checked += 1;
                         }
+                        tracing::debug!(
+                            "[Doris查询] 站点 {} ST 包检查: 告警 {} 项",
+                            station_id,
+                            station_alarms
+                        );
+                    } else {
+                        tracing::debug!("[Doris查询] 站点 {} ST 包查询无结果", station_id);
                     }
                 }
             }
@@ -1479,15 +1517,23 @@ impl DbService {
                 .fetch_all(pool)
                 .await
             {
-                Ok(tuples) => tuples
-                    .into_iter()
-                    .map(|t| StRow {
-                        device_type: t.0,
-                        device_nid: t.1,
-                        data_time: t.2,
-                        data: t.3,
-                    })
-                    .collect(),
+                Ok(tuples) => {
+                    let rows: Vec<StRow> = tuples
+                        .into_iter()
+                        .map(|t| StRow {
+                            device_type: t.0,
+                            device_nid: t.1,
+                            data_time: t.2,
+                            data: t.3,
+                        })
+                        .collect();
+                    tracing::debug!(
+                        "[Doris查询] 站点 {} 设备原始数据: {} 行",
+                        station_id,
+                        rows.len()
+                    );
+                    rows
+                }
                 Err(e) => {
                     tracing::warn!("查询站点设备状态失败 {}: {}", station_id, e);
                     return result;
@@ -1560,6 +1606,322 @@ impl DbService {
 
         result.devices = devices;
         result
+    }
+
+    // ==================== 时间段监察查询（time-range inspection） ====================
+
+    /// 时段监察：设备级到报聚合。
+    /// 返回 (station_num, device_type, device_nid, 条数, 最早data_time, 最晚data_time)。
+    /// 模拟模式返回空集（由 monitor 层合成数据）。
+    /// Doris 走文本协议内联（sql_escape），MySQL 走 ? 参数化绑定。
+    pub async fn query_inspection_device_stats(
+        &self,
+        station_ids: &[String],
+        start: chrono::NaiveDateTime,
+        end: chrono::NaiveDateTime,
+    ) -> Vec<(
+        String,
+        String,
+        String,
+        i64,
+        Option<chrono::NaiveDateTime>,
+        Option<chrono::NaiveDateTime>,
+    )> {
+        if self.simulation_mode || station_ids.is_empty() {
+            return Vec::new();
+        }
+        let start_s = start.format("%Y-%m-%d %H:%M:%S").to_string();
+        let end_s = end.format("%Y-%m-%d %H:%M:%S").to_string();
+        let t0 = std::time::Instant::now();
+
+        if self.is_doris {
+            let pool = match self.pool.as_ref() {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
+            let sql = format!(
+                "SELECT station_num, device_type, device_nid, COUNT(*), \
+                 MIN(data_time), MAX(data_time) \
+                 FROM {} \
+                 WHERE data_time >= '{}' AND data_time < '{}' \
+                 AND station_num IN ({}) \
+                 GROUP BY station_num, device_type, device_nid",
+                self.doris_st_table,
+                sql_escape(&start_s),
+                sql_escape(&end_s),
+                quote_ids(station_ids)
+            );
+            match sqlx::query_as::<
+                _,
+                (
+                    String,
+                    String,
+                    String,
+                    i64,
+                    Option<chrono::NaiveDateTime>,
+                    Option<chrono::NaiveDateTime>,
+                ),
+            >(&sql)
+            .fetch_all(pool)
+            .await
+            {
+                Ok(rows) => {
+                    tracing::debug!(
+                        "[时段监察] Doris 设备到报聚合: {} 行, 耗时 {:?}",
+                        rows.len(),
+                        t0.elapsed()
+                    );
+                    rows
+                }
+                Err(e) => {
+                    tracing::warn!("[时段监察] Doris 设备到报聚合失败: {}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            let pool = match self.pool.as_ref() {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
+            let placeholders = station_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT station_num, device_type, device_nid, COUNT(*), \
+                 MIN(data_time), MAX(data_time) \
+                 FROM data_st \
+                 WHERE data_time >= ? AND data_time < ? \
+                 AND station_num IN ({}) \
+                 GROUP BY station_num, device_type, device_nid",
+                placeholders
+            );
+            let mut q = sqlx::query_as::<
+                _,
+                (
+                    String,
+                    String,
+                    String,
+                    i64,
+                    Option<chrono::NaiveDateTime>,
+                    Option<chrono::NaiveDateTime>,
+                ),
+            >(&sql)
+            .bind(&start_s)
+            .bind(&end_s);
+            for id in station_ids {
+                q = q.bind(id);
+            }
+            match q.fetch_all(pool).await {
+                Ok(rows) => {
+                    tracing::debug!(
+                        "[时段监察] MySQL 设备到报聚合: {} 行, 耗时 {:?}",
+                        rows.len(),
+                        t0.elapsed()
+                    );
+                    rows
+                }
+                Err(e) => {
+                    tracing::warn!("[时段监察] MySQL 设备到报聚合失败: {}", e);
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    /// 时段监察：单站实有 data_time 分钟清单（用于缺报区间计算）。
+    /// 只取时间列不取 data 原文，7 天单站 ≤ 10080 行，量级可控。
+    pub async fn query_station_data_times(
+        &self,
+        station_id: &str,
+        start: chrono::NaiveDateTime,
+        end: chrono::NaiveDateTime,
+    ) -> Vec<chrono::NaiveDateTime> {
+        if self.simulation_mode {
+            return Vec::new();
+        }
+        let start_s = start.format("%Y-%m-%d %H:%M:%S").to_string();
+        let end_s = end.format("%Y-%m-%d %H:%M:%S").to_string();
+        let t0 = std::time::Instant::now();
+
+        let rows: Vec<(chrono::NaiveDateTime,)> = if self.is_doris {
+            let pool = match self.pool.as_ref() {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
+            let sql = format!(
+                "SELECT DISTINCT data_time FROM {} \
+                 WHERE station_num = '{}' \
+                 AND data_time >= '{}' AND data_time < '{}' \
+                 ORDER BY data_time",
+                self.doris_st_table,
+                sql_escape(station_id),
+                sql_escape(&start_s),
+                sql_escape(&end_s)
+            );
+            match sqlx::query_as::<_, (chrono::NaiveDateTime,)>(&sql)
+                .fetch_all(pool)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("[时段监察] Doris 分钟清单查询失败 {}: {}", station_id, e);
+                    Vec::new()
+                }
+            }
+        } else {
+            let pool = match self.pool.as_ref() {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
+            let sql = "SELECT DISTINCT data_time FROM data_st \
+                 WHERE station_num = ? \
+                 AND data_time >= ? AND data_time < ? \
+                 ORDER BY data_time";
+            match sqlx::query_as::<_, (chrono::NaiveDateTime,)>(&sql)
+                .bind(station_id)
+                .bind(&start_s)
+                .bind(&end_s)
+                .fetch_all(pool)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("[时段监察] MySQL 分钟清单查询失败 {}: {}", station_id, e);
+                    Vec::new()
+                }
+            }
+        };
+        tracing::debug!(
+            "[时段监察] 分钟清单: 站点 {} 共 {} 行, 耗时 {:?}",
+            station_id,
+            rows.len(),
+            t0.elapsed()
+        );
+        rows.into_iter().map(|r| r.0).collect()
+    }
+
+    /// 时段监察：键集分页拉取 ST 包原文（D9/D10）。
+    /// cursor 为 (data_time, device_type, device_nid) 复合键，严格大于游标续取；
+    /// 返回按 (data_time, device_type, device_nid) 升序，最多 limit 条（调用方钳制 1~500）。
+    pub async fn fetch_st_packets_page(
+        &self,
+        station_id: &str,
+        start: chrono::NaiveDateTime,
+        end: chrono::NaiveDateTime,
+        cursor: Option<(chrono::NaiveDateTime, String, String)>,
+        limit: i64,
+    ) -> Vec<(chrono::NaiveDateTime, String, String, String)> {
+        if self.simulation_mode {
+            return Vec::new();
+        }
+        let limit = limit.clamp(1, 500);
+        let start_s = start.format("%Y-%m-%d %H:%M:%S").to_string();
+        let end_s = end.format("%Y-%m-%d %H:%M:%S").to_string();
+        let t0 = std::time::Instant::now();
+
+        if self.is_doris {
+            let pool = match self.pool.as_ref() {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
+            let cursor_cond = match &cursor {
+                Some((ct, cdt, cdn)) => {
+                    let cts = ct.format("%Y-%m-%d %H:%M:%S").to_string();
+                    format!(
+                        " AND (data_time > '{}' \
+                         OR (data_time = '{}' AND device_type > '{}') \
+                         OR (data_time = '{}' AND device_type = '{}' AND device_nid > '{}'))",
+                        sql_escape(&cts),
+                        sql_escape(&cts),
+                        sql_escape(cdt),
+                        sql_escape(&cts),
+                        sql_escape(cdt),
+                        sql_escape(cdn)
+                    )
+                }
+                None => String::new(),
+            };
+            let sql = format!(
+                "SELECT data_time, device_type, device_nid, data FROM {} \
+                 WHERE station_num = '{}' \
+                 AND data_time >= '{}' AND data_time < '{}'{} \
+                 ORDER BY data_time, device_type, device_nid LIMIT {}",
+                self.doris_st_table,
+                sql_escape(station_id),
+                sql_escape(&start_s),
+                sql_escape(&end_s),
+                cursor_cond,
+                limit
+            );
+            match sqlx::query_as::<_, (chrono::NaiveDateTime, String, String, String)>(&sql)
+                .fetch_all(pool)
+                .await
+            {
+                Ok(rows) => {
+                    tracing::debug!(
+                        "[时段监察] Doris ST 包分页: 站点 {} {} 行, 耗时 {:?}",
+                        station_id,
+                        rows.len(),
+                        t0.elapsed()
+                    );
+                    rows
+                }
+                Err(e) => {
+                    tracing::warn!("[时段监察] Doris ST 包分页失败 {}: {}", station_id, e);
+                    Vec::new()
+                }
+            }
+        } else {
+            let pool = match self.pool.as_ref() {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
+            let (cursor_cond, has_cursor) = match &cursor {
+                Some(_) => (
+                    " AND (data_time > ? \
+                     OR (data_time = ? AND device_type > ?) \
+                     OR (data_time = ? AND device_type = ? AND device_nid > ?))",
+                    true,
+                ),
+                None => ("", false),
+            };
+            let sql = format!(
+                "SELECT data_time, device_type, device_nid, data FROM data_st \
+                 WHERE station_num = ? \
+                 AND data_time >= ? AND data_time < ?{} \
+                 ORDER BY data_time, device_type, device_nid LIMIT ?",
+                cursor_cond
+            );
+            let mut q = sqlx::query_as::<_, (chrono::NaiveDateTime, String, String, String)>(&sql)
+                .bind(station_id)
+                .bind(&start_s)
+                .bind(&end_s);
+            if has_cursor {
+                let (ct, cdt, cdn) = cursor.as_ref().unwrap();
+                let cts = ct.format("%Y-%m-%d %H:%M:%S").to_string();
+                q = q
+                    .bind(cts.clone())
+                    .bind(cts.clone())
+                    .bind(cdt.clone())
+                    .bind(cts)
+                    .bind(cdt.clone())
+                    .bind(cdn.clone());
+            }
+            q = q.bind(limit);
+            match q.fetch_all(pool).await {
+                Ok(rows) => {
+                    tracing::debug!(
+                        "[时段监察] MySQL ST 包分页: 站点 {} {} 行, 耗时 {:?}",
+                        station_id,
+                        rows.len(),
+                        t0.elapsed()
+                    );
+                    rows
+                }
+                Err(e) => {
+                    tracing::warn!("[时段监察] MySQL ST 包分页失败 {}: {}", station_id, e);
+                    Vec::new()
+                }
+            }
+        }
     }
 }
 

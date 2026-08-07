@@ -1,9 +1,10 @@
 use crate::config::StationConfig;
 use crate::models::{
-    CheckItem, ForecastDetail, ForecastOverview, MonitorData, MonitorSummary, StationMeta,
+    CheckItem, DeviceInspection, ForecastDetail, ForecastOverview, GapInterval,
+    InspectionAlarmEvent, MonitorData, MonitorSummary, StationInspection, StationMeta,
     StationStatus,
 };
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration, Local, NaiveDateTime, Timelike};
 use rand::Rng;
 use std::collections::HashMap;
 
@@ -999,5 +1000,280 @@ fn forecast_advice(status: &StationStatus, level: &str) -> String {
         "关注告警趋势，检查传感器与网络稳定性".to_string()
     } else {
         "保持当前巡检频次，持续观察数据变化".to_string()
+    }
+}
+
+
+// ==================== 时间段监察（time-range inspection） ====================
+
+/// ST 包定点解析（D10）：与 parse_st_packet 语义等价，但不做全字段物化。
+/// 惰性迭代逗号分隔字段，跳过固定 7 字段帧头（下标 0~6），
+/// 仅对监控项（is_kit）解码，扫描即弃，零拷贝。
+/// 说明：帧头 7 字段为强约定（业务 2026-08-07 确认）；YPOWR00 特例维持现有行为，后续单独讨论。
+pub fn parse_st_alarms_fast(data: &str) -> Vec<CheckItem> {
+    let mut results = Vec::new();
+    let mut it = data.split(',');
+    // 跳过帧头 7 个字段（下标 0~6）；不足 7 字段视为无效帧
+    if it.nth(6).is_none() {
+        return results;
+    }
+    // 从下标 7 起按 (项, 值) 配对
+    while let (Some(item), Some(value)) = (it.next(), it.next()) {
+        let item = item.trim();
+        let value = value.trim();
+        if item.is_empty() {
+            continue;
+        }
+        // 跳过关闭/未配置项（与原 parse_st_packet 一致）
+        if value.len() == 1 {
+            match value.as_bytes()[0] {
+                b'N' | b'C' | b'-' | b'/' => continue,
+                _ => {}
+            }
+        }
+        if is_kit(item) {
+            let is_abnormal = !(value == "0" || value == "0:0:0:0:0:0:0:0:0:0");
+            let alarm_text = if is_abnormal {
+                get_alarm(item, value)
+            } else {
+                String::new()
+            };
+            results.push(CheckItem {
+                item: item.to_string(),
+                value: value.to_string(),
+                alarm: alarm_text,
+                abnormal: is_abnormal,
+            });
+        }
+    }
+    results
+}
+
+/// 缺报区间合并：以分钟网格比对时段内实有的 data_time 集合，
+/// 连续缺报分钟合并为区间。present 需已排序（升序）。
+/// 网格口径：[start_trunc, start_trunc + expected_minutes)，start 先截断到分钟。
+pub fn merge_gap_intervals(
+    present: &[NaiveDateTime],
+    start: NaiveDateTime,
+    expected_minutes: i64,
+) -> Vec<GapInterval> {
+    let mut gaps = Vec::new();
+    if expected_minutes <= 0 {
+        return gaps;
+    }
+    let start_min = start
+        .with_second(0)
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(start);
+    // 实有分钟集合（截断到分钟）
+    let present_minutes: std::collections::HashSet<i64> = present
+        .iter()
+        .map(|t| {
+            let m = t.with_second(0).and_then(|x| x.with_nanosecond(0)).unwrap_or(*t);
+            (m - start_min).num_minutes()
+        })
+        .collect();
+
+    let mut k = 0i64;
+    while k < expected_minutes {
+        if !present_minutes.contains(&k) {
+            let gap_start = k;
+            while k < expected_minutes && !present_minutes.contains(&k) {
+                k += 1;
+            }
+            let gap_len = k - gap_start;
+            let fmt = |m: i64| {
+                (start_min + Duration::minutes(m))
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            };
+            gaps.push(GapInterval {
+                start: fmt(gap_start),
+                end: fmt(k - 1),
+                minutes: gap_len,
+            });
+        } else {
+            k += 1;
+        }
+    }
+    gaps
+}
+
+/// 模拟模式的监察总览合成数据（R3：SQLite 库仅有当前时刻数据，
+/// 时段查询在模拟模式下返回按规则合成的结果，保证页面可演示）
+pub fn generate_inspection_overview_sim(
+    stations: &[StationConfig],
+    start: NaiveDateTime,
+    expected_minutes: i64,
+    station_filter: Option<&str>,
+) -> Vec<StationInspection> {
+    let mut rng = rand::thread_rng();
+    let fmt = |t: NaiveDateTime| t.format("%Y-%m-%d %H:%M:%S").to_string();
+    let end = start + Duration::minutes(expected_minutes);
+
+    stations
+        .iter()
+        .filter(|s| station_filter.map_or(true, |f| s.id == f))
+        .map(|s| {
+            // 到报率 85%~100% 随机
+            let rate: f64 = rng.gen_range(85.0..=100.0);
+            let actual = ((expected_minutes as f64) * rate / 100.0).round() as i64;
+            let missing = expected_minutes - actual;
+            // 合成缺报区间：将缺报分钟随机分布为 0~3 段
+            let mut gaps = Vec::new();
+            let mut remain = missing;
+            while remain > 0 && gaps.len() < 3 {
+                let seg = rng.gen_range(1..=remain.min(30));
+                let off = rng.gen_range(0..expected_minutes.max(1) - seg + 1);
+                gaps.push(GapInterval {
+                    start: fmt(start + Duration::minutes(off)),
+                    end: fmt(start + Duration::minutes(off + seg - 1)),
+                    minutes: seg,
+                });
+                remain -= seg;
+            }
+            let device_n = rng.gen_range(20..=30i64);
+            let devices = if station_filter.is_some() {
+                (0..device_n)
+                    .map(|i| {
+                        let drate: f64 = rng.gen_range(85.0..=100.0);
+                        DeviceInspection {
+                            device_type: format!("DT{:02}", i % 6),
+                            device_nid: format!("{:02}", i),
+                            device_name: format!("模拟设备{:02}", i),
+                            actual_count: ((expected_minutes as f64) * drate / 100.0).round()
+                                as i64,
+                            expected_count: expected_minutes,
+                            arrival_rate: (drate * 100.0).round() / 100.0,
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            StationInspection {
+                station_id: s.id.clone(),
+                station_name: s.name.clone(),
+                actual_count: actual,
+                expected_count: expected_minutes,
+                arrival_rate: (rate * 100.0).round() / 100.0,
+                first_data_time: fmt(start),
+                last_data_time: fmt(end - Duration::minutes(1)),
+                device_count: device_n,
+                gaps,
+                devices,
+            }
+        })
+        .collect()
+}
+
+/// 模拟模式的告警时间线合成数据
+pub fn generate_inspection_alarms_sim(
+    _station_id: &str,
+    _station_name: &str,
+    start: NaiveDateTime,
+    expected_minutes: i64,
+) -> Vec<InspectionAlarmEvent> {
+    let mut rng = rand::thread_rng();
+    let n = rng.gen_range(2..=8usize);
+    let sample_items = ["aDOOR", "aCF", "xA", "wA", "tA", "yA"];
+    (0..n)
+        .map(|_| {
+            let off = rng.gen_range(0..expected_minutes.max(1));
+            let item = sample_items[rng.gen_range(0..sample_items.len())];
+            let value = "1";
+            InspectionAlarmEvent {
+                data_time: (start + Duration::minutes(off))
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
+                device_type: format!("DT{:02}", rng.gen_range(0..6)),
+                device_nid: format!("{:02}", rng.gen_range(0..30)),
+                device_name: "模拟设备".to_string(),
+                item: item.to_string(),
+                value: value.to_string(),
+                alarm: get_alarm(item, value),
+            }
+        })
+        .collect::<Vec<_>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 定点解析与原 parse_st_packet 对拍：多种帧形态结果必须一致
+    #[test]
+    fn fast_parse_matches_original() {
+        let frames = vec![
+            // 标准帧：7 字段帧头 + 键值对
+            "BG,50936,DT00,YPOWR00,01,2026,08,aDOOR,1,aCF,0,wA,0,xA,2",
+            // 含跳过值 N/C/-//
+            "BG,50936,DT00,YOBSR00,02,2026,08,qA,N,rB,C,sD,-,tE,/,aDOOR,1",
+            // 全正常项
+            "BG,50936,DT00,YOBSR00,02,2026,08,wA,0,xA,0:0:0:0:0:0:0:0:0:0",
+            // 空项名
+            "BG,50936,DT00,YOBSR00,02,2026,08,,1,aDOOR,0",
+            // 字段不足（<8）
+            "BG,50936,DT00",
+            // 恰好 8 字段（无完整键值对）
+            "BG,50936,DT00,YOBSR00,02,2026,08,aDOOR",
+            // 奇数尾字段（最后一对缺值）
+            "BG,50936,DT00,YOBSR00,02,2026,08,aDOOR,1,wA",
+            // 空帧
+            "",
+        ];
+        for frame in frames {
+            let expected = parse_st_packet(frame);
+            let actual = parse_st_alarms_fast(frame);
+            assert_eq!(
+                expected.len(),
+                actual.len(),
+                "帧 {:?} 解析条数不一致",
+                frame
+            );
+            for (e, a) in expected.iter().zip(actual.iter()) {
+                assert_eq!(e.item, a.item, "帧 {:?} 项名不一致", frame);
+                assert_eq!(e.value, a.value, "帧 {:?} 值不一致", frame);
+                assert_eq!(e.alarm, a.alarm, "帧 {:?} 告警文本不一致", frame);
+                assert_eq!(e.abnormal, a.abnormal, "帧 {:?} 异常标记不一致", frame);
+            }
+        }
+    }
+
+    #[test]
+    fn gap_merge_basic() {
+        let start = NaiveDateTime::parse_from_str("2026-08-07 10:00:30", "%Y-%m-%d %H:%M:%S").unwrap();
+        // 10:00:30 截断到 10:00；期望 10 分钟网格 10:00~10:09
+        // 实有：10:00, 10:01, 10:05, 10:09 → 缺 10:02~10:04（3 分钟）、10:06~10:08（3 分钟）
+        let present = vec![
+            NaiveDateTime::parse_from_str("2026-08-07 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2026-08-07 10:01:25", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2026-08-07 10:05:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            NaiveDateTime::parse_from_str("2026-08-07 10:09:59", "%Y-%m-%d %H:%M:%S").unwrap(),
+        ];
+        let gaps = merge_gap_intervals(&present, start, 10);
+        assert_eq!(gaps.len(), 2);
+        assert_eq!(gaps[0].start, "2026-08-07 10:02:00");
+        assert_eq!(gaps[0].end, "2026-08-07 10:04:00");
+        assert_eq!(gaps[0].minutes, 3);
+        assert_eq!(gaps[1].start, "2026-08-07 10:06:00");
+        assert_eq!(gaps[1].end, "2026-08-07 10:08:00");
+        assert_eq!(gaps[1].minutes, 3);
+    }
+
+    #[test]
+    fn gap_merge_edge_cases() {
+        let start = NaiveDateTime::parse_from_str("2026-08-07 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        // 全部缺报
+        let gaps = merge_gap_intervals(&[], start, 5);
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].minutes, 5);
+        // 零长度时段
+        assert!(merge_gap_intervals(&[], start, 0).is_empty());
+        // 全部到报
+        let present: Vec<NaiveDateTime> = (0..5)
+            .map(|k| start + Duration::minutes(k))
+            .collect();
+        assert!(merge_gap_intervals(&present, start, 5).is_empty());
     }
 }

@@ -197,3 +197,85 @@ pub struct ForecastDetail {
     pub confidence: String,
     pub generated_at: String,
 }
+
+
+// ==================== 时间段监察（time-range inspection） ====================
+
+/// 连续缺报分钟合并后的缺报区间
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GapInterval {
+    /// 区间起始（缺报的第一分钟），格式 YYYY-MM-DD HH:MM:SS
+    pub start: String,
+    /// 区间结束（缺报的最后一分钟），格式 YYYY-MM-DD HH:MM:SS
+    pub end: String,
+    /// 缺报分钟数
+    pub minutes: i64,
+}
+
+/// 设备级到报统计（站点下钻时返回）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceInspection {
+    pub device_type: String,
+    pub device_nid: String,
+    /// 设备类型中文名（来自云库 device_type 名称表，查不到时回退编码）
+    pub device_name: String,
+    pub actual_count: i64,
+    pub expected_count: i64,
+    /// 到报率（0~100，保留 2 位小数）
+    pub arrival_rate: f64,
+}
+
+/// 站点级监察结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StationInspection {
+    pub station_id: String,
+    pub station_name: String,
+    pub actual_count: i64,
+    pub expected_count: i64,
+    /// 到报率（0~100，保留 2 位小数）
+    pub arrival_rate: f64,
+    pub first_data_time: String,
+    pub last_data_time: String,
+    pub device_count: i64,
+    /// 缺报区间（按站点分钟网格统计，任意设备有数据即视为该分钟有到报）
+    pub gaps: Vec<GapInterval>,
+    /// 设备级明细，仅在指定单站下钻时非空
+    pub devices: Vec<DeviceInspection>,
+}
+
+/// GET /api/inspection/overview 响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionOverviewResponse {
+    pub start: String,
+    pub end: String,
+    /// 时段内应有分钟数（每分钟应有 1 条/设备）
+    pub expected_minutes: i64,
+    /// 是否为模拟模式合成数据（true 时结果仅供演示，不代表真实监察结论）
+    pub simulation: bool,
+    pub stations: Vec<StationInspection>,
+}
+
+/// 告警时间线事件（时段内某条 ST 包解析出的异常项）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionAlarmEvent {
+    pub data_time: String,
+    pub device_type: String,
+    pub device_nid: String,
+    pub device_name: String,
+    pub item: String,
+    pub value: String,
+    pub alarm: String,
+}
+
+/// GET /api/inspection/alarms 响应（键集分页）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionAlarmsResponse {
+    pub station_id: String,
+    pub station_name: String,
+    pub events: Vec<InspectionAlarmEvent>,
+    /// 下一页游标；None 表示已到末页
+    pub next_cursor: Option<String>,
+    /// 本页解析的 ST 包条数（受每页上限限制）
+    pub parsed_packets: usize,
+    pub simulation: bool,
+}

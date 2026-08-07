@@ -24,6 +24,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
+use chrono::Timelike;
 use tokio::sync::{broadcast, RwLock};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
@@ -141,9 +142,44 @@ struct ForecastQuery {
     station: Option<String>,
 }
 
+/// 时间段监察总览查询参数（start/end 缺省 = 最近 1 小时）
+#[derive(Deserialize)]
+struct InspectionQuery {
+    start: Option<String>,
+    end: Option<String>,
+    station: Option<String>,
+}
+
+/// 时间段监察告警时间线查询参数（station 必填，键集分页）
+#[derive(Deserialize)]
+struct InspectionAlarmsQuery {
+    start: Option<String>,
+    end: Option<String>,
+    station: Option<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+}
+
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    // 日志：控制台 + 每日滚动文件（logs/weather-monitor.log.YYYY-MM-DD）
+    // 级别由 RUST_LOG 环境变量控制，默认 info；调试各环节可用：
+    //   set RUST_LOG=weather_monitor=debug   （仅本 crate  debug）
+    //   set RUST_LOG=debug                   （全部 debug）
+    let log_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let file_appender = tracing_appender::rolling::daily("logs", "weather-monitor.log");
+    let (file_writer, _log_guard) = tracing_appender::non_blocking(file_appender);
+    use tracing_subscriber::prelude::*;
+    tracing_subscriber::registry()
+        .with(log_filter)
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(file_writer)
+                .with_ansi(false),
+        )
+        .init();
 
     // ============================================================
     // License verification (compile-time controlled)
@@ -183,10 +219,28 @@ async fn main() {
     let (devices_tx, _devices_rx) = broadcast::channel::<String>(128);
 
     let db = if cfg.monitor.simulation_mode {
-        tracing::info!("配置为模拟模式，使用本地 SQLite 数据库");
+        tracing::info!("[启动] 配置为模拟模式，使用本地 SQLite 数据库");
         db::DbService::new_simulation().await
     } else {
-        tracing::info!("真实模式，数据源: {}", cfg.monitor.data_source);
+        tracing::info!("[启动] 真实模式，数据源: {}", cfg.monitor.data_source);
+        if cfg.monitor.data_source.eq_ignore_ascii_case("doris") {
+            match cfg.doris.as_ref() {
+                Some(d) => tracing::info!(
+                    "[启动] Doris 目标: {}:{}/{}（st_table={}, station_table={}），密码来自环境变量: {}",
+                    d.host,
+                    d.port,
+                    d.db,
+                    d.st_table,
+                    d.station_table,
+                    if std::env::var("DORIS_DB_PASSWORD").is_ok() {
+                        "已设置"
+                    } else {
+                        "未设置（将使用配置文件占位符，连接大概率失败）"
+                    }
+                ),
+                None => tracing::warn!("[启动] data_source=doris 但未配置 [doris] 段，将回退 MySQL 主库配置"),
+            }
+        }
         db::DbService::new_with_source(
             &cfg.database,
             &cfg.cloud_database,
@@ -196,9 +250,15 @@ async fn main() {
         .await
     };
 
+    tracing::info!(
+        "[启动] 数据库服务就绪: simulation_mode={}, is_doris={}",
+        db.simulation_mode,
+        db.is_doris
+    );
+
     // Load station metadata once at startup
     let station_meta = db.load_station_meta(&cfg.stations).await;
-    tracing::info!("已加载 {} 个站点元数据", station_meta.len());
+    tracing::info!("[启动] 已加载 {} 个站点元数据", station_meta.len());
 
     let state = Arc::new(AppState {
         data: RwLock::new(models::MonitorData {
@@ -279,6 +339,7 @@ async fn main() {
     tokio::spawn(async move {
         // First load after a short delay so the web server binds first
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        tracing::debug!("[监控刷新] 首次刷新开始");
         let mut new_data = state_clone
             .db
             .query_monitor_data(
@@ -287,8 +348,16 @@ async fn main() {
             )
             .await;
         enrich_station_meta(&mut new_data.stations, &state_clone.station_meta);
+        tracing::info!(
+            "[监控刷新] 首次完成: 站点={}, 在线={}, 告警={}, 记录={}",
+            new_data.summary.total,
+            new_data.summary.online,
+            new_data.summary.alarms,
+            new_data.summary.records
+        );
         if let Ok(json) = serde_json::to_string(&new_data) {
             let _ = state_clone.tx.send(json);
+            tracing::debug!("[监控刷新] 首次数据已 SSE 推送");
         }
         {
             let mut data = state_clone.data.write().await;
@@ -301,6 +370,7 @@ async fn main() {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
+            tracing::debug!("[监控刷新] 周期刷新开始");
             let mut new_data = state_clone
                 .db
                 .query_monitor_data(
@@ -309,10 +379,18 @@ async fn main() {
                 )
                 .await;
             enrich_station_meta(&mut new_data.stations, &state_clone.station_meta);
+            tracing::info!(
+                "[监控刷新] 周期完成: 站点={}, 在线={}, 告警={}, 记录={}",
+                new_data.summary.total,
+                new_data.summary.online,
+                new_data.summary.alarms,
+                new_data.summary.records
+            );
 
             // Broadcast update via SSE
             if let Ok(json) = serde_json::to_string(&new_data) {
                 let _ = state_clone.tx.send(json);
+                tracing::debug!("[监控刷新] 数据已 SSE 推送");
             }
 
             let mut data = state_clone.data.write().await;
@@ -324,14 +402,18 @@ async fn main() {
     let state_devices = state.clone();
     tokio::spawn(async move {
         // 启动时立即预热一次缓存，避免前端首次访问时返回空数据
+        tracing::debug!("[设备缓存] 启动预热开始");
         refresh_station_devices_cache(&state_devices).await;
+        tracing::info!("[设备缓存] 启动预热完成");
 
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
         loop {
             interval.tick().await;
+            tracing::debug!("[设备缓存] 周期刷新开始");
             refresh_station_devices_cache(&state_devices).await;
+            tracing::info!("[设备缓存] 周期刷新完成");
         }
     });
 
@@ -358,6 +440,7 @@ async fn main() {
         .route("/login", get(login_page_handler).post(login_handler))
         .route("/logout", get(logout_handler))
         .route("/station/{id}/devices", get(devices_page_handler))
+        .route("/inspection", get(inspection_page_handler))
         .route("/api/status", get(api_status))
         .route("/api/summary", get(api_summary))
         .route("/api/stations", get(api_stations))
@@ -374,6 +457,8 @@ async fn main() {
         .route("/api/forecast", get(api_forecast))
         .route("/api/forecast/{id}", get(api_forecast_detail))
         .route("/api/license", get(api_license))
+        .route("/api/inspection/overview", get(api_inspection_overview))
+        .route("/api/inspection/alarms", get(api_inspection_alarms))
         .fallback(static_handler)
         .route_layer(axum::middleware::from_fn(move |req, next| {
             let state = auth_state.clone();
@@ -463,6 +548,10 @@ async fn overview_handler() -> Html<&'static str> {
 
 async fn devices_page_handler() -> Html<&'static str> {
     Html(include_str!("../templates/devices.html"))
+}
+
+async fn inspection_page_handler() -> Html<&'static str> {
+    Html(include_str!("../templates/inspection.html"))
 }
 
 async fn api_status(State(state): State<Arc<AppState>>) -> Json<models::MonitorData> {
@@ -814,6 +903,12 @@ async fn refresh_station_devices_cache(state: &Arc<AppState>) {
                     .unwrap_or_default();
 
                 let fresh = state.db.get_station_devices(&id, &station_name).await;
+                tracing::debug!(
+                    "[设备缓存] 站点 {}({}) 设备查询完成: {} 台",
+                    id,
+                    station_name,
+                    fresh.devices.len()
+                );
                 let changed = {
                     let cache = state.station_devices.read().await;
                     match cache.get(&id) {
@@ -999,6 +1094,321 @@ async fn api_forecast_detail(
 async fn api_license(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let license_state = state.license_state.lock().unwrap();
     Json(license::license::get_status(&license_state))
+}
+
+// ==================== 时间段监察（time-range inspection） ====================
+
+/// 监察时间参数解析：接受 datetime-local（YYYY-MM-DDTHH:MM[:SS]）
+/// 与空格分隔（YYYY-MM-DD HH:MM[:SS]）两种格式
+fn parse_inspection_time(s: &str) -> Option<chrono::NaiveDateTime> {
+    let s = s.trim();
+    for fmt in [
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+    ] {
+        if let Ok(t) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
+            return Some(t);
+        }
+    }
+    None
+}
+
+/// 解析并校验监察时段：默认最近 1 小时；end > start；跨度 ≤ 7 天（D2）。
+/// 返回 (截断到分钟的 start, end, 应有分钟数)
+fn resolve_inspection_range(
+    start: Option<&str>,
+    end: Option<&str>,
+) -> Result<(chrono::NaiveDateTime, chrono::NaiveDateTime, i64), String> {
+    let now = chrono::Local::now().naive_local();
+    let end = match end {
+        Some(s) if !s.trim().is_empty() => {
+            parse_inspection_time(s).ok_or_else(|| format!("结束时间格式无效: {}", s))?
+        }
+        _ => now,
+    };
+    let start = match start {
+        Some(s) if !s.trim().is_empty() => {
+            parse_inspection_time(s).ok_or_else(|| format!("开始时间格式无效: {}", s))?
+        }
+        _ => end - chrono::Duration::hours(1),
+    };
+    if end <= start {
+        return Err("结束时间必须晚于开始时间".to_string());
+    }
+    if (end - start) > chrono::Duration::days(7) {
+        return Err("单次监察时段最长 7 天，请缩小范围".to_string());
+    }
+    // start 截断到分钟，与缺报分钟网格口径一致
+    let start_min = start
+        .with_second(0)
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(start);
+    let expected_minutes = (end - start_min).num_minutes();
+    Ok((start_min, end, expected_minutes))
+}
+
+fn inspection_400(msg: String) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
+}
+
+/// GET /api/inspection/overview：到报率总览（站点级；指定 station 时下钻设备级）
+async fn api_inspection_overview(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<InspectionQuery>,
+) -> Response {
+    let (start, end, expected_minutes) =
+        match resolve_inspection_range(q.start.as_deref(), q.end.as_deref()) {
+            Ok(v) => v,
+            Err(e) => return inspection_400(e),
+        };
+    let t0 = std::time::Instant::now();
+    let fmt = |t: chrono::NaiveDateTime| t.format("%Y-%m-%d %H:%M:%S").to_string();
+
+    // 模拟模式：返回合成数据（R3）
+    if state.db.simulation_mode {
+        let stations = monitor::generate_inspection_overview_sim(
+            &state.config.stations,
+            start,
+            expected_minutes,
+            q.station.as_deref(),
+        );
+        tracing::info!(
+            "[时段监察] overview(模拟): 站点={}, 时段={} ~ {}",
+            stations.len(),
+            fmt(start),
+            fmt(end)
+        );
+        return Json(models::InspectionOverviewResponse {
+            start: fmt(start),
+            end: fmt(end),
+            expected_minutes,
+            simulation: true,
+            stations,
+        })
+        .into_response();
+    }
+
+    // 真实模式：确定站点范围
+    let stations_cfg: Vec<&config::StationConfig> = state
+        .config
+        .stations
+        .iter()
+        .filter(|s| q.station.as_deref().map_or(true, |f| s.id == f))
+        .collect();
+    if stations_cfg.is_empty() {
+        return inspection_400("站点不存在或未配置".to_string());
+    }
+    let station_ids: Vec<String> = stations_cfg.iter().map(|s| s.id.clone()).collect();
+
+    // 设备级聚合（Doris/MySQL 双路径）
+    let rows = state
+        .db
+        .query_inspection_device_stats(&station_ids, start, end)
+        .await;
+
+    // 按站点归组
+    let mut by_station: std::collections::HashMap<String, Vec<_>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        by_station.entry(row.0.clone()).or_default().push(row);
+    }
+
+    let drill_down = q.station.is_some();
+    let mut stations_out = Vec::new();
+    for st in &stations_cfg {
+        let dev_rows = by_station.get(&st.id).cloned().unwrap_or_default();
+        let device_count = dev_rows.len() as i64;
+        let first = dev_rows.iter().filter_map(|r| r.4).min();
+        let last = dev_rows.iter().filter_map(|r| r.5).max();
+
+        // 缺报区间：基于站点分钟网格（任意设备有数据即视为该分钟到报）
+        let times = state.db.query_station_data_times(&st.id, start, end).await;
+        let present_minutes = times.len() as i64;
+        let gaps = monitor::merge_gap_intervals(&times, start, expected_minutes);
+        let arrival_rate = if expected_minutes > 0 {
+            ((present_minutes as f64 / expected_minutes as f64) * 10000.0).round() / 100.0
+        } else {
+            0.0
+        };
+
+        let devices = if drill_down {
+            dev_rows
+                .iter()
+                .map(|r| {
+                    let rate = if expected_minutes > 0 {
+                        ((r.3 as f64 / expected_minutes as f64) * 10000.0).round() / 100.0
+                    } else {
+                        0.0
+                    };
+                    models::DeviceInspection {
+                        device_type: r.1.clone(),
+                        device_nid: r.2.clone(),
+                        device_name: state.db.get_device_type_name(&r.1),
+                        actual_count: r.3,
+                        expected_count: expected_minutes,
+                        arrival_rate: rate,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        stations_out.push(models::StationInspection {
+            station_id: st.id.clone(),
+            station_name: st.name.clone(),
+            actual_count: present_minutes,
+            expected_count: expected_minutes,
+            arrival_rate,
+            first_data_time: first.map(fmt).unwrap_or_default(),
+            last_data_time: last.map(fmt).unwrap_or_default(),
+            device_count,
+            gaps,
+            devices,
+        });
+    }
+
+    tracing::info!(
+        "[时段监察] overview: 站点={}, 时段={} ~ {}, 耗时 {:?}",
+        stations_out.len(),
+        fmt(start),
+        fmt(end),
+        t0.elapsed()
+    );
+    Json(models::InspectionOverviewResponse {
+        start: fmt(start),
+        end: fmt(end),
+        expected_minutes,
+        simulation: false,
+        stations: stations_out,
+    })
+    .into_response()
+}
+
+/// GET /api/inspection/alarms：告警时间线（键集分页，D9；定点解析，D10）
+async fn api_inspection_alarms(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<InspectionAlarmsQuery>,
+) -> Response {
+    let station_id = match q.station.as_deref() {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return inspection_400("告警时间线需指定 station 参数".to_string()),
+    };
+    let (start, end, expected_minutes) =
+        match resolve_inspection_range(q.start.as_deref(), q.end.as_deref()) {
+            Ok(v) => v,
+            Err(e) => return inspection_400(e),
+        };
+    let limit = q.limit.unwrap_or(200).clamp(1, 500);
+    let station_name = state
+        .config
+        .stations
+        .iter()
+        .find(|s| s.id == station_id)
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| station_id.clone());
+
+    // 模拟模式：合成事件，单页返回无分页
+    if state.db.simulation_mode {
+        let events = monitor::generate_inspection_alarms_sim(
+            &station_id,
+            &station_name,
+            start,
+            expected_minutes,
+        );
+        let n = events.len();
+        tracing::info!("[时段监察] alarms(模拟): 站点={}, 事件={}", station_id, n);
+        return Json(models::InspectionAlarmsResponse {
+            station_id,
+            station_name,
+            events,
+            next_cursor: None,
+            parsed_packets: n,
+            simulation: true,
+        })
+        .into_response();
+    }
+
+    // 游标解码：data_time|device_type|device_nid（| 分隔，非法即 400）
+    let cursor = match q.cursor.as_deref() {
+        Some(c) if !c.trim().is_empty() => {
+            let parts: Vec<&str> = c.split('|').collect();
+            if parts.len() != 3 {
+                return inspection_400("游标格式无效".to_string());
+            }
+            match parse_inspection_time(parts[0]) {
+                Some(t) => Some((t, parts[1].to_string(), parts[2].to_string())),
+                None => return inspection_400("游标时间格式无效".to_string()),
+            }
+        }
+        _ => None,
+    };
+
+    // 多取 1 条判断是否还有下一页
+    let t0 = std::time::Instant::now();
+    let mut rows = state
+        .db
+        .fetch_st_packets_page(&station_id, start, end, cursor, limit + 1)
+        .await;
+    let has_more = rows.len() as i64 > limit;
+    if has_more {
+        rows.truncate(limit as usize);
+    }
+    let next_cursor = if has_more {
+        rows.last().map(|r| {
+            format!(
+                "{}|{}|{}",
+                r.0.format("%Y-%m-%d %H:%M:%S"),
+                r.1,
+                r.2
+            )
+        })
+    } else {
+        None
+    };
+
+    // 定点解析（D10），仅保留异常项
+    let parsed_packets = rows.len();
+    let mut events = Vec::new();
+    for (dt, dtype, dnid, data) in &rows {
+        for item in monitor::parse_st_alarms_fast(data) {
+            if item.abnormal {
+                events.push(models::InspectionAlarmEvent {
+                    data_time: dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    device_type: dtype.clone(),
+                    device_nid: dnid.clone(),
+                    device_name: state.db.get_device_type_name(dtype),
+                    item: item.item,
+                    value: item.value,
+                    alarm: item.alarm,
+                });
+            }
+        }
+    }
+
+    tracing::info!(
+        "[时段监察] alarms: 站点={}, 解析包={}, 告警事件={}, has_more={}, 耗时 {:?}",
+        station_id,
+        parsed_packets,
+        events.len(),
+        has_more,
+        t0.elapsed()
+    );
+    Json(models::InspectionAlarmsResponse {
+        station_id,
+        station_name,
+        events,
+        next_cursor,
+        parsed_packets,
+        simulation: false,
+    })
+    .into_response()
 }
 
 async fn sse_handler(

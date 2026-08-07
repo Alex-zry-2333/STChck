@@ -189,6 +189,9 @@ http://localhost:8080/forecast # AI 预报页面
 | `GET /api/events`                                     | -    | SSE 实时推送流                |
 | `GET /api/forecast`                                   | -    | 设备运行状态 AI 预报列表      |
 | `GET /api/forecast/{id}`                              | -    | 单站点 AI 预报详情            |
+| `GET /inspection`                                     | -    | 时间段监察页面 HTML           |
+| `GET /api/inspection/overview?start=&end=&station=`   | -    | 时段监察总览（到报率/缺报区间，站点可选下钻设备级） |
+| `GET /api/inspection/alarms?start=&end=&station=&cursor=&limit=` | - | 时段告警时间线（键集分页） |
 
 ### AI 预报交互时序
 

@@ -6,3 +6,8 @@
 /station_50936_real.json
 /regions_real.json
 config.toml
+# 本地 Doris 启动脚本（含数据库密码，严禁提交）
+start-doris.ps1
+start-doris.bat
+# 运行日志目录
+logs/

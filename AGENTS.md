@@ -65,7 +65,8 @@ weather-monitor/
 │   └── doris-support-design.md  # Doris 支持设计文档与联调记录
 ├── templates/
 │   ├── dashboard.html      # 主监控仪表盘（ECharts + SSE）
-│   └── devices.html        # 站内设备状态详情页
+│   ├── devices.html        # 站内设备状态详情页
+│   └── inspection.html     # 时间段监察页（起止时间选择 + 到报率/缺报/告警时间线）
 └── target/                 # cargo 编译输出
 ```
 
@@ -276,6 +277,9 @@ $env:DORIS_DB_PASSWORD="实际密码"     # 仅使用 Doris 数据源时需要
 | `GET /api/devices/events` | 设备状态 SSE 流 |
 | `GET /api/chart/alarms?hours=24` | 告警趋势图数据 |
 | `GET /api/chart/values?station=50936&item=wA&hours=6` | 设备数值曲线数据 |
+| `GET /inspection` | 时间段监察页面 HTML |
+| `GET /api/inspection/overview?start=&end=&station=` | 时段监察总览（到报率/缺报区间，指定站点下钻设备级） |
+| `GET /api/inspection/alarms?start=&end=&station=&cursor=&limit=` | 时段告警时间线（键集分页） |
 | `GET /api/events` | 监控数据 SSE 流 |
 
 ---

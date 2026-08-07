@@ -23,6 +23,18 @@ echo [WARNING] Neither config.toml nor config.toml.example found, using defaults
 
 :skip_config
 
+REM If data_source=doris but password env is missing, warn early (falls back to simulation)
+REM NOTE: keep echo lines ASCII-only -- cmd parses .bat as GBK and mojibake breaks lines
+findstr /C:"data_source = \"doris\"" config.toml > nul 2>&1
+if not errorlevel 1 (
+    if not defined DORIS_DB_PASSWORD (
+        echo [WARNING] data_source=doris but DORIS_DB_PASSWORD is NOT set!
+        echo [WARNING] Doris connection will fail and fall back to simulation mode.
+        echo [WARNING] Run start-doris.bat instead, or: set DORIS_DB_PASSWORD=your_password
+        echo.
+    )
+)
+
 REM Check executable
 set "EXE_PATH=target\release\weather-monitor.exe"
 set "EXE_PATH_DEBUG=target\debug\weather-monitor.exe"
@@ -47,6 +59,7 @@ goto :run
 :run
 echo [INFO] Starting: %EXE_PATH%
 echo [INFO] Access: http://localhost:8080
+echo [INFO] Logs: logs\weather-monitor.log (debug: set RUST_LOG=weather_monitor=debug)
 echo [INFO] Press Ctrl+C to stop
 echo.
 

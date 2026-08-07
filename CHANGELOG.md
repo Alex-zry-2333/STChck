@@ -6,6 +6,42 @@
 
 ---
 
+## 2026-08-07 功能：时间段监察 + 全链路调试日志
+
+### 1. 时间段监察（time-range inspection）
+
+**影响**: 新增按起止时间回看历史数据的监察能力（与实时窗口互补）。需求与决策记录见 `docs/time-range-inspection-requirements.md`（D1–D10 业务已确认），设计见 `docs/time-range-inspection-design.md`。
+
+| 文件 | 修改内容 |
+|------|----------|
+| `src/models.rs` | 新增监察响应结构：`InspectionOverviewResponse` / `StationInspection` / `DeviceInspection` / `GapInterval` / `InspectionAlarmsResponse` / `InspectionAlarmEvent` |
+| `src/monitor.rs` | 新增 `parse_st_alarms_fast`（D10 定点解析：惰性迭代、跳过固定 7 字段帧头、仅解码监控项，语义与 `parse_st_packet` 等价）；`merge_gap_intervals`（缺报分钟合并为区间）；模拟模式合成函数；`#[cfg(test)]` 对拍与边界测试 |
+| `src/db.rs` | 新增 `query_inspection_device_stats` / `query_station_data_times` / `fetch_st_packets_page`，均 Doris（转义内联+元组解码）/ MySQL（`?` 绑定）双路径，模拟模式返回空由上层合成 |
+| `src/main.rs` | 新增路由 `GET /inspection`（页面）、`GET /api/inspection/overview`、`GET /api/inspection/alarms`；时间参数校验（默认最近 1 小时、跨度 ≤ 7 天、非法输入 400）；键集分页游标 `data_time\|device_type\|device_nid`（D9，不用 OFFSET）；`[时段监察]` 日志前缀 |
+| `templates/inspection.html` | 新增监察页面：起止时间选择、站点下拉（全部/单站下钻）、到报率总览表、缺报区间展示、告警时间线翻页 |
+
+QA 验收（Doris 实测 10.10.1.67，测试数据时段 16:30–17:36）：32 站总览与手工 SQL 抽查一致（56739 实有分钟 52=52、54333 设备数 29=29）；缺报分钟 16:41 正确出现在 gaps；告警时间线 6 页键集分页累计 1072 包与 SQL COUNT 一致、无重复无遗漏；5 类非法输入均 400；模拟模式降级返回合成数据（`simulation: true` 标识）；`cargo test` 31 项通过（含定点解析对拍）。
+
+注意：YPOWR00 智能电源自定义格式本期维持现有解析行为，后续单独讨论；帧头 7 字段为业务确认的强约定。
+
+### 2. 全链路调试日志
+
+**影响**: 便于后台跟踪每个环节执行步骤。
+
+| 文件 | 修改内容 |
+|------|----------|
+| `src/main.rs` / `src/db.rs` | 日志同时输出控制台与每日滚动文件 `logs/weather-monitor.log.YYYY-MM-DD`；级别由 `RUST_LOG` 控制（如 `weather_monitor=debug`）；启动/元数据/Doris 查询/监控刷新/设备缓存等环节带前缀标记 |
+| `Cargo.toml` | 新增 `tracing-appender` 依赖 |
+
+### 3. 启动脚本与安全
+
+| 文件 | 修改内容 |
+|------|----------|
+| `start.ps1` / `start.bat` | 已配置 Doris 但未设 `DORIS_DB_PASSWORD` 时给出明确警告；bat 纯 ASCII 化、ps1 加 BOM 修复中文乱码；提示调试日志用法 |
+| `.gitignore` | 忽略 `start-doris.ps1` / `start-doris.bat`（含 Doris 密码，严禁提交）与 `logs/` |
+
+---
+
 ## 2026-08-07 功能：Apache Doris 数据源支持（含联调修复）
 
 ### 1. Doris 数据源接入

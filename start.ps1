@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 #Requires -Version 5.1
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -28,6 +28,17 @@ $exePaths = @(
     "target/debug/weather-monitor.exe"
 )
 
+# 若配置了 Doris 数据源但未注入密码环境变量，提前警告（否则会降级模拟模式）
+if (Test-Path "config.toml") {
+    $cfgText = Get-Content "config.toml" -Raw
+    if ($cfgText -match 'data_source\s*=\s*"doris"' -and -not $env:DORIS_DB_PASSWORD) {
+        Write-Host "[WARNING] 已配置 Doris 数据源，但未设置 DORIS_DB_PASSWORD 环境变量！" -ForegroundColor Red
+        Write-Host "[WARNING] Doris 连接将失败并降级为模拟模式。请先执行：" -ForegroundColor Red
+        Write-Host '          $env:DORIS_DB_PASSWORD = "实际密码"' -ForegroundColor Red
+        Write-Host ""
+    }
+}
+
 $exePath = $null
 foreach ($path in $exePaths) {
     if (Test-Path $path) {
@@ -53,6 +64,7 @@ if (-not $exePath) {
 
 Write-Host "[INFO] 启动程序: $exePath" -ForegroundColor Green
 Write-Host "[INFO] 访问地址: http://localhost:8080" -ForegroundColor Green
+Write-Host "[INFO] 日志文件: logs\weather-monitor.log （调试日志：`$env:RUST_LOG='weather_monitor=debug'`）" -ForegroundColor Green
 Write-Host "[INFO] 按 Ctrl+C 停止服务" -ForegroundColor Green
 Write-Host ""
 

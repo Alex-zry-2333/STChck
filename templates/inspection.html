@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>时间段监察</title>
+<style>
+:root {
+  --bg: #f0f6ff;
+  --card-bg: #ffffff;
+  --primary: #2196f3;
+  --primary-dark: #1565c0;
+  --primary-light: #e3f2fd;
+  --primary-gradient: linear-gradient(135deg, #1565c0, #1e88e5);
+  --text-primary: #1a2332;
+  --text-secondary: #5a6a7a;
+  --text-muted: #9aaaba;
+  --border: #e8edf4;
+  --shadow: 0 4px 20px rgba(33,150,243,0.08);
+  --radius: 16px;
+  --radius-sm: 12px;
+  --green: #4caf50;
+  --red: #f44336;
+  --orange: #ff9800;
+  --gray-bg: #f5f7fa;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif; background: var(--bg); color: var(--text-primary); min-height: 100vh; }
+
+.header {
+  background: var(--primary-gradient);
+  padding: 16px 24px;
+  display: flex; align-items: center; gap: 16px;
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: 0 4px 24px rgba(21,101,192,0.2);
+}
+.back-btn {
+  width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: rgba(255,255,255,0.15); color: #fff; font-size: 18px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s; text-decoration: none;
+}
+.back-btn:hover { background: rgba(255,255,255,0.25); }
+.header-title h1 { font-size: 18px; font-weight: 600; color: #fff; }
+.header-title p { font-size: 12px; color: rgba(255,255,255,0.7); margin-top: 2px; }
+
+.container { max-width: 1400px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+
+.card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
+.card h2 { font-size: 15px; margin-bottom: 14px; color: var(--text-primary); }
+
+.controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 12px; color: var(--text-secondary); }
+.field input, .field select {
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 13px; color: var(--text-primary); background: #fff; min-width: 200px;
+}
+.btn {
+  padding: 9px 22px; border: none; border-radius: var(--radius-sm);
+  background: var(--primary); color: #fff; font-size: 13px; cursor: pointer;
+  transition: background 0.2s;
+}
+.btn:hover { background: var(--primary-dark); }
+.btn:disabled { background: var(--text-muted); cursor: not-allowed; }
+.btn-secondary { background: var(--primary-light); color: var(--primary-dark); }
+.btn-secondary:hover { background: #d0e6fb; }
+
+.hint { font-size: 12px; color: var(--text-muted); }
+.error-box { color: var(--red); font-size: 13px; padding: 8px 0; display: none; }
+.sim-badge {
+  display: none; font-size: 12px; color: var(--orange);
+  background: #fff8e1; border: 1px solid #ffecb3; border-radius: 8px; padding: 4px 10px;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--text-secondary); font-weight: 600; background: var(--gray-bg); }
+tr:hover td { background: var(--primary-light); }
+.rate-bad { color: var(--red); font-weight: 600; }
+.rate-good { color: var(--green); font-weight: 600; }
+.gap-list { font-size: 12px; color: var(--text-secondary); }
+.gap-item { display: inline-block; background: #ffebee; color: var(--red); border-radius: 6px; padding: 2px 8px; margin: 2px 4px 2px 0; }
+.link-btn { color: var(--primary); cursor: pointer; font-size: 12px; border: none; background: none; text-decoration: underline; }
+
+#alarm-section { display: none; }
+.alarm-meta { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+.empty { text-align: center; color: var(--text-muted); padding: 30px 0; font-size: 13px; }
+.loading { text-align: center; color: var(--text-secondary); padding: 20px 0; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a class="back-btn" href="/">←</a>
+  <div class="header-title">
+    <h1>时间段监察</h1>
+    <p>指定起止时间，回看历史数据到报情况与告警时间线（时间口径：数据时间 data_time）</p>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <h2>监察条件</h2>
+    <div class="controls">
+      <div class="field">
+        <label>开始时间</label>
+        <input type="datetime-local" id="start-input">
+      </div>
+      <div class="field">
+        <label>结束时间</label>
+        <input type="datetime-local" id="end-input">
+      </div>
+      <div class="field">
+        <label>站点（选择单站可下钻设备与告警时间线）</label>
+        <select id="station-select">
+          <option value="">全部站点</option>
+        </select>
+      </div>
+      <button class="btn" id="query-btn" onclick="runOverview()">开始监察</button>
+      <span class="sim-badge" id="sim-badge">模拟模式：以下为合成演示数据</span>
+    </div>
+    <div class="hint" style="margin-top:8px">缺省为最近 1 小时；单次最长 7 天。</div>
+    <div class="error-box" id="error-box"></div>
+  </div>
+
+  <div class="card" id="overview-section" style="display:none">
+    <h2>到报率总览</h2>
+    <div class="hint" id="overview-meta" style="margin-bottom:10px"></div>
+    <div id="overview-body"></div>
+  </div>
+
+  <div class="card" id="alarm-section">
+    <h2 id="alarm-title">告警时间线</h2>
+    <div class="alarm-meta" id="alarm-meta"></div>
+    <div id="alarm-body"></div>
+    <div style="margin-top:12px; text-align:center">
+      <button class="btn btn-secondary" id="more-btn" onclick="loadAlarms(false)" style="display:none">加载更多</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let alarmCursor = null;
+let alarmStation = null;
+
+// 默认时段：最近 1 小时
+function setDefaultRange() {
+  const now = new Date();
+  const start = new Date(now.getTime() - 3600 * 1000);
+  const fmt = d => {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  document.getElementById('start-input').value = fmt(start);
+  document.getElementById('end-input').value = fmt(now);
+}
+
+async function loadStations() {
+  try {
+    const res = await fetch('/api/stations');
+    const list = await res.json();
+    const sel = document.getElementById('station-select');
+    for (const s of list) {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = `${s.name} ${s.id}`;
+      sel.appendChild(opt);
+    }
+  } catch (e) { console.error('加载站点列表失败', e); }
+}
+
+function showError(msg) {
+  const box = document.getElementById('error-box');
+  box.textContent = msg;
+  box.style.display = msg ? 'block' : 'none';
+}
+
+function rangeParams() {
+  const s = document.getElementById('start-input').value;
+  const e = document.getElementById('end-input').value;
+  return `start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
+}
+
+async function runOverview() {
+  showError('');
+  document.getElementById('alarm-section').style.display = 'none';
+  alarmCursor = null; alarmStation = null;
+  const station = document.getElementById('station-select').value;
+  const btn = document.getElementById('query-btn');
+  btn.disabled = true; btn.textContent = '监察中…';
+  try {
+    const url = '/api/inspection/overview?' + rangeParams() + (station ? `&station=${encodeURIComponent(station)}` : '');
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) { showError(data.error || '查询失败'); return; }
+    renderOverview(data, !!station);
+    if (station) {
+      alarmStation = station;
+      document.getElementById('alarm-section').style.display = 'block';
+      document.getElementById('alarm-title').textContent = `告警时间线 - ${station}`;
+      loadAlarms(true);
+    }
+  } catch (e) {
+    showError('网络错误：' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '开始监察';
+  }
+}
+
+function renderOverview(data, drillDown) {
+  document.getElementById('overview-section').style.display = 'block';
+  document.getElementById('sim-badge').style.display = data.simulation ? 'inline-block' : 'none';
+  document.getElementById('overview-meta').textContent =
+    `时段：${data.start} ~ ${data.end}（应有 ${data.expected_minutes} 分钟）`;
+
+  let html = '<table><thead><tr>' +
+    '<th>站点</th><th>应有分钟</th><th>实到分钟</th><th>到报率</th>' +
+    '<th>首到报</th><th>末到报</th><th>设备数</th><th>缺报区间</th>' +
+    (drillDown ? '' : '<th>操作</th>') + '</tr></thead><tbody>';
+  for (const st of data.stations) {
+    const rateCls = st.arrival_rate >= 100 ? 'rate-good' : 'rate-bad';
+    const gaps = st.gaps.length === 0 ? '<span style="color:var(--green)">无缺报</span>'
+      : '<div class="gap-list">' + st.gaps.map(g =>
+          `<span class="gap-item">${g.start.slice(5,16)} ~ ${g.end.slice(5,16)}（${g.minutes}分钟）</span>`).join('') + '</div>';
+    const action = drillDown ? '' :
+      `<td><button class="link-btn" onclick="drillStation('${st.station_id}')">下钻/告警</button></td>`;
+    html += `<tr><td>${st.station_name} ${st.station_id}</td>` +
+      `<td>${st.expected_count}</td><td>${st.actual_count}</td>` +
+      `<td class="${rateCls}">${st.arrival_rate.toFixed(2)}%</td>` +
+      `<td>${st.first_data_time || '-'}</td><td>${st.last_data_time || '-'}</td>` +
+      `<td>${st.device_count}</td><td>${gaps}</td>${action}</tr>`;
+
+    if (drillDown && st.devices.length > 0) {
+      html += `<tr><td colspan="8" style="background:var(--gray-bg)"><table><thead><tr>` +
+        '<th>设备</th><th>类型</th><th>应有条数</th><th>实到条数</th><th>到报率</th>' +
+        '</tr></thead><tbody>';
+      for (const d of st.devices) {
+        const dCls = d.arrival_rate >= 100 ? 'rate-good' : 'rate-bad';
+        html += `<tr><td>${d.device_name}</td><td>${d.device_type}/${d.device_nid}</td>` +
+          `<td>${d.expected_count}</td><td>${d.actual_count}</td>` +
+          `<td class="${dCls}">${d.arrival_rate.toFixed(2)}%</td></tr>`;
+      }
+      html += '</tbody></table></td></tr>';
+    }
+  }
+  html += '</tbody></table>';
+  if (data.stations.length === 0) html = '<div class="empty">该时段无数据</div>';
+  document.getElementById('overview-body').innerHTML = html;
+}
+
+function drillStation(id) {
+  document.getElementById('station-select').value = id;
+  runOverview();
+}
+
+async function loadAlarms(fresh) {
+  if (fresh) { alarmCursor = null; document.getElementById('alarm-body').innerHTML = ''; }
+  const btn = document.getElementById('more-btn');
+  btn.style.display = 'none';
+  const body = document.getElementById('alarm-body');
+  if (fresh) body.innerHTML = '<div class="loading">加载中…</div>';
+  try {
+    let url = '/api/inspection/alarms?' + rangeParams() +
+      `&station=${encodeURIComponent(alarmStation)}&limit=200`;
+    if (alarmCursor) url += `&cursor=${encodeURIComponent(alarmCursor)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) { body.innerHTML = `<div class="empty">${data.error || '查询失败'}</div>`; return; }
+    if (fresh) body.innerHTML = '';
+    document.getElementById('alarm-meta').textContent =
+      `站点：${data.station_name} ${data.station_id}；本页解析 ST 包 ${data.parsed_packets} 条，告警事件 ${data.events.length} 条`;
+    if (data.events.length === 0 && fresh) {
+      body.innerHTML = '<div class="empty">该时段本页范围内无告警</div>';
+    }
+    if (data.events.length > 0) {
+      let html = (fresh || body.querySelector('table') === null) ?
+        '<table><thead><tr><th>数据时间</th><th>设备</th><th>状态项</th><th>值</th><th>告警</th></tr></thead><tbody></tbody></table>' : '';
+      if (html) body.insertAdjacentHTML('beforeend', html);
+      const tbody = body.querySelector('tbody');
+      for (const ev of data.events) {
+        tbody.insertAdjacentHTML('beforeend',
+          `<tr><td>${ev.data_time}</td><td>${ev.device_name}（${ev.device_type}/${ev.device_nid}）</td>` +
+          `<td>${ev.item}</td><td>${ev.value}</td><td>${ev.alarm}</td></tr>`);
+      }
+    }
+    alarmCursor = data.next_cursor;
+    if (alarmCursor) btn.style.display = 'inline-block';
+  } catch (e) {
+    document.getElementById('alarm-body').innerHTML = '<div class="empty">网络错误</div>';
+  }
+}
+
+setDefaultRange();
+loadStations();
+</script>
+</body>
+</html>
