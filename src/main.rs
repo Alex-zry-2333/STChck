@@ -1,3 +1,4 @@
+mod cma;
 mod config;
 mod db;
 mod license;
@@ -103,6 +104,7 @@ struct AppState {
     devices_tx: broadcast::Sender<String>,
     session_tokens: RwLock<HashSet<String>>,
     license_state: std::sync::Mutex<license::license::LicenseState>,
+    cma_service: Option<cma::CmaService>,
 }
 
 #[derive(serde::Serialize)]
@@ -190,6 +192,12 @@ async fn main() {
     let station_meta = db.load_station_meta(&cfg.stations).await;
     tracing::info!("已加载 {} 个站点元数据", station_meta.len());
 
+    let cma_service = if cfg.cma.enabled {
+        Some(cma::CmaService::new(&cfg.cma, &cfg.stations))
+    } else {
+        None
+    };
+
     let state = Arc::new(AppState {
         data: RwLock::new(models::MonitorData {
             stations: vec![],
@@ -212,6 +220,7 @@ async fn main() {
         devices_tx,
         session_tokens: RwLock::new(HashSet::new()),
         license_state: std::sync::Mutex::new(license_state.clone()),
+        cma_service,
     });
 
     // ============================================================
@@ -325,6 +334,27 @@ async fn main() {
         }
     });
 
+    // Background CMA data refresh (if enabled)
+    if let Some(cma_svc) = state.cma_service.as_ref() {
+        let cma_service = cma_svc.clone();
+        let db = Arc::new(state.db.clone());
+        let interval_minutes = state.config.cma.refresh_interval_minutes;
+        tokio::spawn(async move {
+            // 启动时先等 2 秒让其他服务先起来
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            cma_service.run_refresh_task(db.clone()).await;
+
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(interval_minutes * 60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                cma_service.run_refresh_task(db.clone()).await;
+            }
+        });
+        tracing::info!("CMA 后台数据拉取已启动，间隔: {} 分钟", interval_minutes);
+    }
+
     let port = if state.config.server.port > 65535 {
         tracing::warn!(
             "端口 {} 无效（超过 65535），使用 8080 代替",
@@ -364,6 +394,10 @@ async fn main() {
         .route("/api/forecast", get(api_forecast))
         .route("/api/forecast/{id}", get(api_forecast_detail))
         .route("/api/license", get(api_license))
+        .route("/api/cma/surface/{id}", get(api_cma_surface))
+        .route("/api/cma/history/{id}", get(api_cma_history))
+        .route("/api/cma/compare/{id}", get(api_cma_compare))
+        .route("/api/cma/alerts", get(api_cma_alerts))
         .fallback(static_handler)
         .route_layer(axum::middleware::from_fn(move |req, next| {
             let state = auth_state.clone();
@@ -1151,4 +1185,56 @@ fn get_item_info(item: &str) -> (String, String) {
 
 async fn static_handler() -> Response {
     (StatusCode::NOT_FOUND, "Not Found").into_response()
+}
+
+// ── CMA API handlers ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CmaHistoryQuery {
+    hours: Option<i64>,
+}
+
+async fn api_cma_surface(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
+    match &state.cma_service {
+        Some(svc) => match svc.get_surface_overview(&state.db, &id).await {
+            Some(overview) => Json(overview).into_response(),
+            None => (StatusCode::NOT_FOUND, "无 CMA 实况数据").into_response(),
+        },
+        None => (StatusCode::SERVICE_UNAVAILABLE, "CMA 功能未启用").into_response(),
+    }
+}
+
+async fn api_cma_history(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(q): Query<CmaHistoryQuery>,
+) -> Response {
+    match &state.cma_service {
+        Some(svc) => {
+            let hours = q.hours.unwrap_or(24).max(1).min(168);
+            let history = svc.get_surface_history(&state.db, &id, hours).await;
+            Json(history).into_response()
+        }
+        None => (StatusCode::SERVICE_UNAVAILABLE, "CMA 功能未启用").into_response(),
+    }
+}
+
+async fn api_cma_compare(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
+    match &state.cma_service {
+        Some(svc) => match svc.compare_data(&state.db, &id).await {
+            Some(result) => Json(result).into_response(),
+            None => (StatusCode::NOT_FOUND, "无对比数据").into_response(),
+        },
+        None => (StatusCode::SERVICE_UNAVAILABLE, "CMA 功能未启用").into_response(),
+    }
+}
+
+async fn api_cma_alerts(State(state): State<Arc<AppState>>) -> Response {
+    match &state.cma_service {
+        Some(svc) => {
+            let alerts = svc.generate_alerts(&state.db).await;
+            Json(alerts).into_response()
+        }
+        None => (StatusCode::SERVICE_UNAVAILABLE, "CMA 功能未启用").into_response(),
+    }
 }

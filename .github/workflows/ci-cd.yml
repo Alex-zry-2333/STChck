@@ -153,24 +153,15 @@ jobs:
 
           SOURCE_BRANCH="${GITHUB_REF#refs/heads/}"
 
-          if git fetch origin hw/tested 2>/dev/null; then
-            git checkout -B hw/tested origin/hw/tested
-            git merge --no-ff "${GITHUB_SHA}" -m "✅ Auto-promote: Tests passed for ${SOURCE_BRANCH}
-
-          Source: ${SOURCE_BRANCH}
-          Commit: ${GITHUB_SHA}"
-          else
-            git checkout -b hw/tested
-          fi
-
+          # 直接 force-push 当前 SHA 到 hw/tested
+          # hw/tested 是 CI 自动晋升的标记分支，不需要保留 merge history
           MAX_RETRIES=3
           for ((i=1; i<=MAX_RETRIES; i++)); do
-            if git push origin hw/tested; then
-              echo "✅ Promoted to hw/tested"
+            if git push origin "${GITHUB_SHA}:refs/heads/hw/tested" --force; then
+              echo "✅ Promoted ${GITHUB_SHA:0:8} to hw/tested"
               exit 0
             fi
             echo "⚠️ Retry $i/$MAX_RETRIES..."
             sleep 5
-            git fetch origin hw/tested || true
           done
           exit 1

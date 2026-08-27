@@ -1,10 +1,11 @@
+use crate::cma::models::CmaSurfaceData;
 use crate::config::{DatabaseConfig, StationConfig};
 use crate::models::{
     DeviceStatusInfo, DeviceStatusItem, MonitorData, MonitorSummary, StationDevicesResponse,
     StationMeta, StationStatus,
 };
 use crate::monitor::parse_st_packet;
-use chrono::{Local, Timelike};
+use chrono::{Local, NaiveDateTime, Timelike};
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::MySqlPool;
@@ -71,6 +72,18 @@ pub struct DbService {
     pub sqlite_pool: Option<sqlx::SqlitePool>,
     pub simulation_mode: bool,
     device_type_names: HashMap<String, String>,
+}
+
+impl Clone for DbService {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            cloud_pool: self.cloud_pool.clone(),
+            sqlite_pool: self.sqlite_pool.clone(),
+            simulation_mode: self.simulation_mode,
+            device_type_names: self.device_type_names.clone(),
+        }
+    }
 }
 
 impl DbService {
@@ -219,7 +232,37 @@ impl DbService {
         };
 
         if let Some(pool) = &sqlite_pool {
-            // 初始化 data_st 表
+            // 初始化 CMA 数据缓存表
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS cma_surface_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    station_id TEXT NOT NULL,
+                    year TEXT,
+                    mon TEXT,
+                    day TEXT,
+                    hour TEXT,
+                    tem TEXT,
+                    prs TEXT,
+                    rhu TEXT,
+                    pre_1h TEXT,
+                    win_s_avg_2mi TEXT,
+                    win_d_avg_2mi TEXT,
+                    vis TEXT,
+                    data_time TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )",
+            )
+            .execute(pool)
+            .await
+            .ok();
+
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_cma_station_time 
+                 ON cma_surface_data(station_id, data_time DESC)",
+            )
+            .execute(pool)
+            .await
+            .ok();
             sqlx::query(
                 "CREATE TABLE IF NOT EXISTS data_st (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1301,5 +1344,107 @@ fn get_status_item_name(code: &str) -> String {
         "aswitcha" => "称重降水、蒸发加排水状态".into(),
         "atilt" => "北斗设备倾斜角".into(),
         _ => format!("状态项({})", code),
+    }
+}
+
+// ── CMA 数据缓存操作 ───────────────────────────────────────────────────
+
+impl DbService {
+    /// 将 CMA 逐小时观测数据批量写入 SQLite 缓存
+    pub async fn save_cma_surface_data(&self, data: &[CmaSurfaceData]) -> Result<(), sqlx::Error> {
+        let pool = match self.sqlite_pool.as_ref() {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+
+        for d in data {
+            let data_time = format!(
+                "{}-{:0>2}-{:0>2} {:0>2}:00:00",
+                d.year, d.mon, d.day, d.hour
+            );
+            sqlx::query(
+                "INSERT OR REPLACE INTO cma_surface_data 
+                 (station_id, year, mon, day, hour, tem, prs, rhu, pre_1h, 
+                  win_s_avg_2mi, win_d_avg_2mi, vis, data_time)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&d.station_id)
+            .bind(&d.year)
+            .bind(&d.mon)
+            .bind(&d.day)
+            .bind(&d.hour)
+            .bind(d.tem.as_deref())
+            .bind(d.prs.as_deref())
+            .bind(d.rhu.as_deref())
+            .bind(d.pre_1h.as_deref())
+            .bind(d.win_s_avg_2mi.as_deref())
+            .bind(d.win_d_avg_2mi.as_deref())
+            .bind(d.vis.as_deref())
+            .bind(&data_time)
+            .execute(pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// 查询某站最新 N 条 CMA 实况数据
+    pub async fn query_cma_surface_latest(
+        &self,
+        station_id: &str,
+        limit: i64,
+    ) -> Result<Vec<CmaSurfaceData>, sqlx::Error> {
+        let pool = match self.sqlite_pool.as_ref() {
+            Some(p) => p,
+            None => return Ok(Vec::new()),
+        };
+
+        #[derive(sqlx::FromRow)]
+        struct CmaRow {
+            station_id: String,
+            year: String,
+            mon: String,
+            day: String,
+            hour: String,
+            tem: Option<String>,
+            prs: Option<String>,
+            rhu: Option<String>,
+            pre_1h: Option<String>,
+            win_s_avg_2mi: Option<String>,
+            win_d_avg_2mi: Option<String>,
+            vis: Option<String>,
+        }
+
+        let rows: Vec<CmaRow> = sqlx::query_as::<_, CmaRow>(
+            "SELECT station_id, year, mon, day, hour, tem, prs, rhu, pre_1h, 
+                    win_s_avg_2mi, win_d_avg_2mi, vis
+             FROM cma_surface_data
+             WHERE station_id = ?
+             ORDER BY data_time DESC
+             LIMIT ?",
+        )
+        .bind(station_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+        let result: Vec<CmaSurfaceData> = rows
+            .into_iter()
+            .map(|r| CmaSurfaceData {
+                station_id: r.station_id,
+                year: r.year,
+                mon: r.mon,
+                day: r.day,
+                hour: r.hour,
+                tem: r.tem,
+                prs: r.prs,
+                rhu: r.rhu,
+                pre_1h: r.pre_1h,
+                win_s_avg_2mi: r.win_s_avg_2mi,
+                win_d_avg_2mi: r.win_d_avg_2mi,
+                vis: r.vis,
+            })
+            .collect();
+
+        Ok(result)
     }
 }
